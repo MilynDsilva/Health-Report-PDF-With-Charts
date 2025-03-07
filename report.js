@@ -712,6 +712,224 @@ async function generateWeightChart(weightData, timeframeDays) {
     return chartJSNodeCanvas.renderToBuffer(configuration);
 }
 
+/**
+ * Generates an activity chart with:
+ *   - A horizontal goal line at `activityData.calories`.
+ *   - A dotted line for daily `caloriesBurnt`.
+ *   - Color-coded points based on benchmark ranges:
+ *       - Normal => green
+ *       - Borderline => orange
+ *       - Outlier => red
+ */
+async function generateActivityChart(activityData, timeframeDays) {
+    // 1) Filter & sort logs by date so the line is chronological
+    const filteredLogs = filterDataByTimeframe(activityData.logs, timeframeDays)
+        .sort((a, b) => a.measurementDate - b.measurementDate);
+
+    // 2) Convert logs => Chart.js data points for daily `caloriesBurnt`
+    const achievedData = filteredLogs.map(d => ({
+        x: d.measurementDate,
+        y: d.caloriesBurnt
+    }));
+
+    // 3) Color-code each point based on whether `caloriesBurnt` is normal, borderline, or outlier
+    function classifyBurnt(value) {
+        const { lowBorderline, normal, highBorderline } = activityData.benchMarks;
+
+        // If no valid benchmarks, just default all to red or some color
+        if (!lowBorderline || !normal || !highBorderline) {
+            return "#FA114F"; // red
+        }
+
+        // Outlier if below lowBorderline.min or above highBorderline.max
+        if (value < lowBorderline.min || value > highBorderline.max) {
+            return "#FA114F"; // red outlier
+        }
+
+        // Borderline if in the lowBorderline range or the highBorderline range
+        const inLowBorder = (value >= lowBorderline.min && value <= lowBorderline.max);
+        const inHighBorder = (value >= highBorderline.min && value <= highBorderline.max);
+        if (inLowBorder || inHighBorder) {
+            return "#FFA63E"; // orange borderline
+        }
+
+        // Otherwise normal
+        return "#00B050"; // green
+    }
+
+    const colors = filteredLogs.map(d => classifyBurnt(d.caloriesBurnt));
+
+    // 4) Create a horizontal "Goal" line from earliest date to latest date
+    //    using `activityData.calories` as the y-value.
+    let goalLineData = [];
+    if (achievedData.length > 0) {
+        const earliest = achievedData[0].x;
+        const latest = achievedData[achievedData.length - 1].x;
+        goalLineData = [
+            { x: earliest, y: activityData.calories },
+            { x: latest, y: activityData.calories }
+        ];
+    }
+
+    // 5) Build the Chart.js configuration
+    const configuration = {
+        type: "line",
+        data: {
+            datasets: [
+                {
+                    label: "Achieved",
+                    data: achievedData,
+                    borderColor: "#636363",
+                    backgroundColor: "rgba(0,0,0,0)",
+                    pointBackgroundColor: colors,
+                    pointBorderColor: colors,
+                    borderDash: [10, 10],  // dotted line
+                    spanGaps: true
+                },
+                {
+                    label: `Goal (${activityData.calories.toFixed(2)} ${activityData.unit})`,
+                    data: goalLineData,
+                    borderColor: "#0047FF", // blue line
+                    pointRadius: 0,
+                    borderDash: []
+                }
+            ]
+        },
+        options: {
+            scales: {
+                x: {
+                    type: "time",
+                    time: {
+                        tooltipFormat: "DD MMM YYYY",
+                        displayFormats: {
+                            day: "DD MMM"
+                        }
+                    },
+                    title: { display: true, text: "Date" }
+                },
+                y: {
+                    title: { display: true, text: `Calorie (${activityData.unit})` }
+                }
+            },
+            plugins: {
+                legend: { position: "bottom" }
+            }
+        }
+    };
+
+    // 6) Render chart to buffer
+    return chartJSNodeCanvas.renderToBuffer(configuration);
+}
+
+/**
+* Generates a line chart for step count, filtered by logs from "garmin-connect".
+* - A horizontal line for `stepData.goalAverage`.
+* - A dotted line for daily step values (color-coded normal/borderline/outlier).
+*/
+async function generateStepCountChart(stepData, timeframeDays) {
+    // 1) Filter logs by source = "garmin-connect"
+    const garminLogs = stepData.logs.filter(
+        log => log.source && log.source.name === "garmin-connect"
+    );
+
+    // 2) Filter logs by timeframe
+    const filteredLogs = filterDataByTimeframe(garminLogs, timeframeDays)
+        .sort((a, b) => a.measurementDate - b.measurementDate);
+
+    // 3) Convert logs => Chart.js data points
+    const stepDataPoints = filteredLogs.map(d => ({
+        x: d.measurementDate,
+        y: d.value
+    }));
+
+    // 4) Color-code each point based on benchmark ranges
+    function classifySteps(value) {
+        const { lowBorderline, normal, highBorderline } = stepData.benchMarks;
+
+        // If no valid ranges, just color all red
+        if (!lowBorderline || !normal || !highBorderline) {
+            return "#FA114F"; // red
+        }
+
+        // Outlier if < lowBorderline.min or > highBorderline.max
+        if (value < lowBorderline.min || value > highBorderline.max) {
+            return "#FA114F"; // red outlier
+        }
+
+        // Borderline if in [lowBorderline.min..lowBorderline.max] or [highBorderline.min..highBorderline.max]
+        const inLowBorder = (value >= lowBorderline.min && value <= lowBorderline.max);
+        const inHighBorder = (value >= highBorderline.min && value <= highBorderline.max);
+        if (inLowBorder || inHighBorder) {
+            return "#FFA63E"; // orange borderline
+        }
+
+        // Otherwise normal
+        return "#00B050"; // green
+    }
+
+    const colors = filteredLogs.map(d => classifySteps(d.value));
+
+    // 5) Build a horizontal goal line from earliest to latest date
+    //    using `stepData.goalAverage` as y-value
+    let goalLineData = [];
+    if (stepDataPoints.length > 0) {
+        const earliest = stepDataPoints[0].x;
+        const latest = stepDataPoints[stepDataPoints.length - 1].x;
+        goalLineData = [
+            { x: earliest, y: stepData.goalAverage },
+            { x: latest, y: stepData.goalAverage }
+        ];
+    }
+
+    // 6) Create Chart.js configuration
+    const configuration = {
+        type: "line",
+        data: {
+            datasets: [
+                {
+                    label: "Achieved",
+                    data: stepDataPoints,
+                    borderColor: "#636363",
+                    backgroundColor: "rgba(0,0,0,0)",
+                    pointBackgroundColor: colors,
+                    pointBorderColor: colors,
+                    borderDash: [10, 10], // dotted line
+                    spanGaps: true
+                },
+                {
+                    label: `Goal (${stepData.goalAverage} ${stepData.unit})`,
+                    data: goalLineData,
+                    borderColor: "#0047FF", // blue line
+                    pointRadius: 0
+                }
+            ]
+        },
+        options: {
+            scales: {
+                x: {
+                    type: "time",
+                    time: {
+                        tooltipFormat: "DD MMM YYYY",
+                        displayFormats: {
+                            day: "DD MMM"
+                        }
+                    },
+                    title: { display: true, text: "Date" }
+                },
+                y: {
+                    title: { display: true, text: stepData.unit }
+                }
+            },
+            plugins: {
+                legend: { position: "bottom" }
+            }
+        }
+    };
+
+    // 7) Render chart to buffer
+    return chartJSNodeCanvas.renderToBuffer(configuration);
+}
+
 
 async function generatePDF(
     patientInfo,
@@ -722,6 +940,8 @@ async function generatePDF(
     nutritionData,
     hydrateData,
     weightData,
+    activityData,
+    stepData,
     timeframeDays
 ) {
     try {
@@ -1047,6 +1267,64 @@ async function generatePDF(
                 x: (doc.page.width - 550) / 2
             }).moveDown(3);
         }
+
+        doc.moveDown(100);
+        if (activityData) {
+            doc.addPage(); // optional if you want a fresh page
+
+            doc.fontSize(16)
+                .text(`Activity (Last ${timeframeDays} days)`, { align: "center" })
+                .moveDown();
+
+            // Summaries
+            const goalCal = activityData.calories?.toFixed(2) || "-";
+            const achievedCal = activityData.caloriesBurnt?.toFixed(2) || "-";
+
+            doc.fontSize(12)
+                .text(`Goal: ${goalCal} ${activityData.unit}`, { align: "left" })
+                .moveDown(0.5)
+                .text(`Current Achieved: ${achievedCal} ${activityData.unit}`, { align: "left" })
+                .moveDown(1);
+
+            // Generate & embed the activity chart
+            const activityChartImage = await generateActivityChart(activityData, timeframeDays);
+            doc.image(activityChartImage, {
+                width: 550,
+                align: "center",
+                valign: "center",
+                x: (doc.page.width - 550) / 2
+            }).moveDown(3);
+        }
+
+        doc.moveDown(100);
+        if (stepData) {
+            doc.addPage(); // optional if you want a fresh page
+
+            doc.fontSize(16)
+                .text(`Step Count (Last ${timeframeDays} days)`, { align: "center" })
+                .moveDown();
+
+            // Summaries
+            const goalAvg = stepData.goalAverage?.toFixed(2) || "-";
+            const actualAvg = stepData.actualAverage?.toFixed(2) || "-";
+
+            doc.fontSize(12)
+                .text(`Goal: ${goalAvg} ${stepData.unit} - Garmin Connect`, { align: "left" })
+                .moveDown(0.5)
+                .text(`Actual Average: ${actualAvg} ${stepData.unit}`, { align: "left" })
+                .moveDown(1);
+
+            // Generate & embed the step count chart
+            const stepChartImage = await generateStepCountChart(stepData, timeframeDays);
+            doc.image(stepChartImage, {
+                width: 550,
+                align: "center",
+                valign: "center",
+                x: (doc.page.width - 550) / 2
+            }).moveDown(3);
+        }
+
+        //doc.moveDown(100)
 
         // End & save PDF
         doc.end();
@@ -4372,6 +4650,2647 @@ const weightData = {
     }
 }
 
+const activityData = {
+    "type": "activity",
+    "calories": 1620.6889999999999,
+    "caloriesBurnt": 1512.2473277777779,
+    "unit": "kcal",
+    "logs": [
+        {
+            "id": "67c914e8e1280baaae71625c",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "measurementDate": 1741231328434,
+            "lastmodifiedDate": 1741248764669,
+            "value": [
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 360,
+                    "name": "Walking",
+                    "time": 50,
+                    "calories": 296.4675,
+                    "caloriesBurnt": 2192.4,
+                    "activityId": "a7d8a4b6-bc37-484a-b8aa-9c980f207c19",
+                    "createdAt": 1741231336085
+                },
+                {
+                    "timeLogged": 0,
+                    "id": "6769b62176414f37209b0f21",
+                    "name": "Walking",
+                    "time": 50,
+                    "calories": 296.4675,
+                    "caloriesBurnt": 0,
+                    "activityId": "44237a02-2b98-4c9f-b8e9-e4568fe8b746",
+                    "createdAt": 1741234860763
+                },
+                {
+                    "timeLogged": 10,
+                    "id": "6566c1d9c8779c645f16a31e",
+                    "name": "Breathing Exercise",
+                    "time": 50,
+                    "calories": 197.645,
+                    "caloriesBurnt": 40.6,
+                    "activityId": "08e9cd81-28fe-4bfd-98af-45d77857456d",
+                    "createdAt": 1741248764663
+                }
+            ],
+            "source": {
+                "name": "restore-me",
+                "id": "42238125-1db4-498e-8bda-eea986f13859"
+            },
+            "calories": 1620.6889999999999,
+            "caloriesBurnt": 2233
+        },
+        {
+            "id": "67c73cb2e1280b509c716212",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "measurementDate": 1741110420000,
+            "lastmodifiedDate": 1741110420000,
+            "value": [
+                {
+                    "id": "6566c1d9c8779c645f16a31e",
+                    "timeLogged": 30,
+                    "name": "Breathing Exercise",
+                    "time": 50,
+                    "calories": 197.645,
+                    "caloriesBurnt": 121.8,
+                    "activityId": "ddcacef7-7e87-49fe-8fac-5b946eef72f6",
+                    "createdAt": 1741110450923
+                }
+            ],
+            "source": {
+                "name": "restore-me",
+                "id": "1785ff87-030b-412e-8ead-ec9765b5be7d"
+            },
+            "calories": 1620.6889999999999,
+            "caloriesBurnt": 121.8
+        },
+        {
+            "id": "67c17408b4a0e5477677161f",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "measurementDate": 1740727297000,
+            "lastmodifiedDate": 1740740462550,
+            "value": [
+                {
+                    "id": "6769b59176414f37209b0f1f",
+                    "timeLogged": 75,
+                    "name": "Cycling",
+                    "time": 20,
+                    "calories": 0,
+                    "caloriesBurnt": 374,
+                    "activityId": "61e1846f-eb86-4c0f-aa49-09ab7f89fb89",
+                    "createdAt": 1740731400778
+                },
+                {
+                    "id": "6769b59176414f37209b0f1f",
+                    "timeLogged": 75,
+                    "name": "Cycling",
+                    "time": 20,
+                    "calories": 0,
+                    "caloriesBurnt": 374,
+                    "activityId": "5d109877-23c4-43f6-9de8-582bf1ae8e67",
+                    "createdAt": 1740737559757
+                },
+                {
+                    "id": "6769b59176414f37209b0f1f",
+                    "timeLogged": 75,
+                    "name": "Cycling",
+                    "time": 20,
+                    "calories": 0,
+                    "caloriesBurnt": 374,
+                    "activityId": "934540a5-5486-40be-b69d-9b752cdca6fe",
+                    "createdAt": 1740737707362
+                },
+                {
+                    "id": "6769b59176414f37209b0f1f",
+                    "timeLogged": 75,
+                    "name": "Cycling",
+                    "time": 20,
+                    "calories": 0,
+                    "caloriesBurnt": 374,
+                    "activityId": "1b516b0c-9e59-4034-afbb-87b05b8d7eb9",
+                    "createdAt": 1740738890262
+                },
+                {
+                    "id": "6566c3e7c8779c645f16a328",
+                    "timeLogged": 67,
+                    "name": "Other Vigorous Activities",
+                    "time": 20,
+                    "calories": 0,
+                    "caloriesBurnt": 0,
+                    "activityId": "9bfe89a2-3f3f-47ff-8186-83f8e56acd84",
+                    "createdAt": 1740740462549
+                },
+                {
+                    "id": "6566c3e7c8779c645f16a328",
+                    "timeLogged": 67,
+                    "name": "Other Vigorous Activities",
+                    "time": 20,
+                    "calories": 0,
+                    "caloriesBurnt": 0,
+                    "activityId": "4efa84b7-c707-4654-bd7f-98152a55572b",
+                    "createdAt": 1740740462550
+                },
+                {
+                    "id": "6566c3e7c8779c645f16a328",
+                    "timeLogged": 67,
+                    "name": "Other Vigorous Activities",
+                    "time": 20,
+                    "calories": 0,
+                    "caloriesBurnt": 0,
+                    "activityId": "6036c87e-ff58-4c81-a31c-374b9d1ff6dd",
+                    "createdAt": 1740740462550
+                }
+            ],
+            "source": {
+                "name": "garmin-connect",
+                "id": "8ad4cd25-584f-43bd-af21-37c153445307"
+            },
+            "calories": 1620.6889999999999,
+            "caloriesBurnt": 1496
+        },
+        {
+            "id": "67bdd6f36306f7dc288c5d36",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "measurementDate": 1740494572113,
+            "lastmodifiedDate": 1740494685783,
+            "value": [
+                {
+                    "timeLogged": 45,
+                    "id": "6769b60676414f37209b0f20",
+                    "name": "Gym & Fitness Equipment",
+                    "time": 30,
+                    "calories": 296.4675,
+                    "caloriesBurnt": 444.70125,
+                    "activityId": "9243bd64-82dc-4583-a2af-b48d53a53c5e",
+                    "createdAt": 1740494579782
+                },
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 9,
+                    "name": "Walking",
+                    "time": 50,
+                    "calories": 296.4675,
+                    "caloriesBurnt": 53.36414999999999,
+                    "activityId": "f1a56b3b-5d2f-4577-9ff5-c9f355bc2ca9",
+                    "createdAt": 1740494673370
+                },
+                {
+                    "timeLogged": 4,
+                    "id": "6769b60676414f37209b0f20",
+                    "name": "Gym & Fitness Equipment",
+                    "time": 30,
+                    "calories": 296.4675,
+                    "caloriesBurnt": 39.529,
+                    "activityId": "0866089a-5562-48c2-aec7-16538f3dc9e2",
+                    "createdAt": 1740494685775
+                }
+            ],
+            "source": {
+                "name": "restore-me",
+                "id": "017e2d2b-6122-4f4a-ad29-4d325f15246b"
+            },
+            "calories": 1620.6889999999999,
+            "caloriesBurnt": 537.5944000000001
+        },
+        {
+            "id": "67c17408b4a0e5477677161e",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "measurementDate": 1739095812000,
+            "lastmodifiedDate": 1740740775019,
+            "value": [
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 2,
+                    "name": "Walking",
+                    "time": 20,
+                    "calories": 0,
+                    "caloriesBurnt": 12,
+                    "activityId": "430f97fd-0990-4fc1-b448-f30b118fab03",
+                    "createdAt": 1740731400778
+                },
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 2,
+                    "name": "Walking",
+                    "time": 20,
+                    "calories": 0,
+                    "caloriesBurnt": 12,
+                    "activityId": "290815b4-7e11-4cdf-9bcd-d127b38cdf90",
+                    "createdAt": 1740737559756
+                },
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 2,
+                    "name": "Walking",
+                    "time": 20,
+                    "calories": 0,
+                    "caloriesBurnt": 12,
+                    "activityId": "e0f19e12-99af-4035-80d2-61b7318b0975",
+                    "createdAt": 1740738890262
+                },
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 2,
+                    "name": "Walking",
+                    "time": 20,
+                    "calories": 0,
+                    "caloriesBurnt": 12,
+                    "activityId": "3b0cca9e-bfcd-49eb-9426-7b9424f14079",
+                    "createdAt": 1740739349409
+                },
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 2,
+                    "name": "Walking",
+                    "time": 20,
+                    "calories": 0,
+                    "caloriesBurnt": 12,
+                    "activityId": "014409f1-0286-4572-aea3-dcc4305c4782",
+                    "createdAt": 1740740775019
+                }
+            ],
+            "source": {
+                "name": "garmin-connect",
+                "id": "52da8a03-2c51-4a67-a977-ba39c88b4543"
+            },
+            "calories": 1620.6889999999999,
+            "caloriesBurnt": 60
+        },
+        {
+            "id": "6789ffa1111bcee60a50ebce",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "measurementDate": 1737097013031,
+            "lastmodifiedDate": 1737098148934,
+            "value": [
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 6,
+                    "name": "Walking",
+                    "time": 50,
+                    "calories": 262.5,
+                    "caloriesBurnt": 142.695,
+                    "activityId": "eedec37c-3406-45ef-9cf3-d576cbe334be",
+                    "createdAt": 1737097121453
+                },
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 10,
+                    "name": "Walking",
+                    "time": 50,
+                    "calories": 262.5,
+                    "caloriesBurnt": 237.825,
+                    "activityId": "d5e6e781-910f-42da-ad6e-a86d28a41093",
+                    "createdAt": 1737098007242
+                },
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 16,
+                    "name": "Walking",
+                    "time": 50,
+                    "calories": 262.5,
+                    "caloriesBurnt": 380.52,
+                    "activityId": "c75518f5-9fa9-4873-b924-6e5607c383ac",
+                    "createdAt": 1737098094818
+                },
+                {
+                    "id": "6566c1d9c8779c645f16a31e",
+                    "timeLogged": 122,
+                    "name": "Breathing Exercise",
+                    "time": 50,
+                    "calories": 175,
+                    "caloriesBurnt": 1934.31,
+                    "activityId": "e0555ef9-14cb-4460-81ae-c9c9322761a0",
+                    "createdAt": 1737098128537
+                },
+                {
+                    "timeLogged": 4,
+                    "id": "6769b62176414f37209b0f21",
+                    "name": "Walking",
+                    "time": 50,
+                    "calories": 262.5,
+                    "caloriesBurnt": 95.13,
+                    "activityId": "533b1052-b64b-41e0-9c48-9503b747c0c9",
+                    "createdAt": 1737098148925
+                }
+            ],
+            "source": {
+                "name": "restore-me",
+                "id": "16df1627-b7eb-47dc-a89d-d5e012fb7619"
+            },
+            "calories": 1620.6889999999999,
+            "caloriesBurnt": 2790.48
+        },
+        {
+            "id": "6788c19f111bceb1b150ebaf",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "measurementDate": 1737015552594,
+            "lastmodifiedDate": 1737028271507,
+            "value": [
+                {
+                    "timeLogged": 38,
+                    "id": "6769b62176414f37209b0f21",
+                    "name": "Walking",
+                    "time": 50,
+                    "calories": 262.5,
+                    "caloriesBurnt": 903.735,
+                    "activityId": "acf2a306-e726-4a95-b585-480035a1d261",
+                    "createdAt": 1737015711487
+                },
+                {
+                    "timeLogged": 5,
+                    "id": "6769b62176414f37209b0f21",
+                    "name": "Walking",
+                    "time": 50,
+                    "calories": 262.5,
+                    "caloriesBurnt": 118.9125,
+                    "activityId": "60ec5f90-7fc0-4701-843e-c79cfb81dbda",
+                    "createdAt": 1737015816280
+                },
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 4,
+                    "name": "Walking",
+                    "time": 50,
+                    "calories": 262.5,
+                    "caloriesBurnt": 95.13,
+                    "activityId": "636b3c29-69ee-4226-9556-75a6884139d2",
+                    "createdAt": 1737015897971
+                },
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 9,
+                    "name": "Walking",
+                    "time": 50,
+                    "calories": 262.5,
+                    "caloriesBurnt": 214.0425,
+                    "activityId": "8f158a7f-9450-4943-aca4-26e21bd57407",
+                    "createdAt": 1737015989834
+                },
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 12,
+                    "name": "Walking",
+                    "time": 50,
+                    "calories": 262.5,
+                    "caloriesBurnt": 285.39,
+                    "activityId": "bb36999e-a179-43f9-a1a5-6ab22baad495",
+                    "createdAt": 1737016130660
+                },
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 59,
+                    "name": "Walking",
+                    "time": 50,
+                    "calories": 262.5,
+                    "caloriesBurnt": 1403.1675,
+                    "activityId": "9e8f3f4f-ebf0-4d75-9f15-c319ce91e2d1",
+                    "createdAt": 1737016409203
+                },
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 120,
+                    "name": "Walking",
+                    "time": 50,
+                    "calories": 262.5,
+                    "caloriesBurnt": 2853.9,
+                    "activityId": "49ad1fab-4984-4520-8ee0-85be0ea31a4b",
+                    "createdAt": 1737016662656
+                },
+                {
+                    "timeLogged": 4,
+                    "id": "6769b62176414f37209b0f21",
+                    "name": "Walking",
+                    "time": 50,
+                    "calories": 262.5,
+                    "caloriesBurnt": 95.13,
+                    "activityId": "37f2f9e0-fb72-4c53-bb4a-428d1495f0bf",
+                    "createdAt": 1737017276349
+                },
+                {
+                    "id": "6566c1d9c8779c645f16a31e",
+                    "timeLogged": 30,
+                    "name": "Breathing Exercise",
+                    "time": 50,
+                    "calories": 175,
+                    "caloriesBurnt": 475.65,
+                    "activityId": "ba010aeb-629f-46ae-babd-3d25581f0d51",
+                    "createdAt": 1737027217816
+                },
+                {
+                    "id": "6566c1d9c8779c645f16a31e",
+                    "timeLogged": 30,
+                    "name": "Breathing Exercise",
+                    "time": 50,
+                    "calories": 175,
+                    "caloriesBurnt": 475.65,
+                    "activityId": "f938a35b-84ba-4441-a7ed-da40c7a1ff7e",
+                    "createdAt": 1737027233031
+                },
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 2,
+                    "name": "Walking",
+                    "time": 50,
+                    "calories": 262.5,
+                    "caloriesBurnt": 47.565,
+                    "activityId": "26ff9bf8-006e-4dd2-8795-79352b40c9ce",
+                    "createdAt": 1737028271503
+                }
+            ],
+            "source": {
+                "name": "restore-me",
+                "id": "67c12ea5-bad8-4fcc-8c5a-df726c416af5"
+            },
+            "calories": 1620.6889999999999,
+            "caloriesBurnt": 6968.272499999999
+        },
+        {
+            "id": "67877df88a72d61473d76f0f",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "measurementDate": 1736932848657,
+            "lastmodifiedDate": 1736933721275,
+            "value": [
+                {
+                    "timeLogged": 0,
+                    "id": "6566c1d9c8779c645f16a31e",
+                    "name": "Breathing Exercise",
+                    "time": 50,
+                    "calories": 175,
+                    "caloriesBurnt": 0,
+                    "activityId": "5a0f1146-97e7-42ab-946e-50d3ca5c71a4",
+                    "createdAt": 1736932856928
+                },
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 55,
+                    "name": "Walking",
+                    "time": 50,
+                    "calories": 262.5,
+                    "caloriesBurnt": 1308.0375,
+                    "activityId": "161655b5-2670-4242-8c95-875ce649c682",
+                    "createdAt": 1736932869067
+                },
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 14,
+                    "name": "Walking",
+                    "time": 50,
+                    "calories": 262.5,
+                    "caloriesBurnt": 332.955,
+                    "activityId": "6a927743-7181-4c4c-b8cd-60f7ba8cfc3a",
+                    "createdAt": 1736933693008
+                },
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 9,
+                    "name": "Walking",
+                    "time": 50,
+                    "calories": 262.5,
+                    "caloriesBurnt": 214.0425,
+                    "activityId": "9f422a00-3b07-4f2f-81b9-fcbd780848b3",
+                    "createdAt": 1736933721270
+                }
+            ],
+            "source": {
+                "name": "restore-me",
+                "id": "b2401023-ad90-4781-be86-096d2cc74842"
+            },
+            "calories": 1620.6889999999999,
+            "caloriesBurnt": 1855.0349999999999
+        },
+        {
+            "id": "677c2337c1d5c0b81dd4e4de",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "measurementDate": 1736188694641,
+            "lastmodifiedDate": 1736188694641,
+            "value": [
+                {
+                    "timeLogged": 4,
+                    "id": "6769b62176414f37209b0f21",
+                    "name": "Walking",
+                    "time": 50,
+                    "calories": 262.5,
+                    "caloriesBurnt": 231.42,
+                    "activityId": "7df68810-b7f1-4007-ae86-3184979f36c8",
+                    "createdAt": 1736188727905
+                }
+            ],
+            "source": {
+                "name": "restore-me",
+                "id": "8fe285ec-066f-4d5e-a9d5-170d051e450d"
+            },
+            "calories": 1620.6889999999999,
+            "caloriesBurnt": 231.42
+        },
+        {
+            "id": "677b9de9e689e25090012544",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "measurementDate": 1736131690000,
+            "lastmodifiedDate": 1736154601028,
+            "value": [
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 11,
+                    "name": "Walking",
+                    "time": 20,
+                    "calories": 0,
+                    "caloriesBurnt": 29,
+                    "activityId": "53ac1e6b-5f4c-4466-8fed-fbcbde180146",
+                    "createdAt": 1736154601028
+                }
+            ],
+            "source": {
+                "name": "garmin-connect",
+                "id": "7a3dd97c-a26b-4375-9da8-a57e08ff6e99"
+            },
+            "calories": 1620.6889999999999,
+            "caloriesBurnt": 29
+        },
+        {
+            "id": "677aaf0dc1d5c0f979d4e490",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "measurementDate": 1736093400000,
+            "lastmodifiedDate": 1736093400000,
+            "value": [
+                {
+                    "id": "6566c1d9c8779c645f16a31e",
+                    "timeLogged": 30,
+                    "name": "Breathing Exercise",
+                    "time": 50,
+                    "calories": 175,
+                    "caloriesBurnt": 1157.1,
+                    "activityId": "9d9196ad-a992-45da-9c01-ce90b730efb1",
+                    "createdAt": 1736093453790
+                }
+            ],
+            "source": {
+                "name": "restore-me",
+                "id": "dab8f962-a25a-4a57-8f2f-5a1643f1755b"
+            },
+            "calories": 1620.6889999999999,
+            "caloriesBurnt": 1157.1
+        },
+        {
+            "id": "677773d0d8659d27c83fff26",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "measurementDate": 1735881660000,
+            "lastmodifiedDate": 1735898674399,
+            "value": [
+                {
+                    "timeLogged": 68,
+                    "id": "6566c3dac8779c645f16a327",
+                    "name": "Other moderate activities",
+                    "time": 30,
+                    "calories": 315,
+                    "caloriesBurnt": 357,
+                    "activityId": "9f8e4c60-c490-4ed8-a909-c589db1de148",
+                    "createdAt": 1735884081499
+                },
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 0,
+                    "name": "Walking",
+                    "time": 50,
+                    "calories": 262.5,
+                    "caloriesBurnt": 0,
+                    "activityId": "1ffde364-cc0f-4ef5-938f-9a343f990a4b",
+                    "createdAt": 1735898674395
+                }
+            ],
+            "source": {
+                "name": "restore-me",
+                "id": "07f2526f-66d7-41a2-a308-7c8a9016b727"
+            },
+            "calories": 1620.6889999999999,
+            "caloriesBurnt": 357
+        },
+        {
+            "id": "676db746ba998f89cbc2a4b1",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "measurementDate": 1735243320000,
+            "lastmodifiedDate": 1735317600715,
+            "value": [
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 0,
+                    "name": "Walking",
+                    "time": 20,
+                    "calories": 0,
+                    "caloriesBurnt": 1,
+                    "activityId": "e2da763c-0449-4fdc-9fb8-c6bb37772eb5",
+                    "createdAt": 1735243590457
+                },
+                {
+                    "id": "6769b60676414f37209b0f20",
+                    "timeLogged": 6,
+                    "name": "Gym & Fitness Equipment",
+                    "time": 20,
+                    "calories": 0,
+                    "caloriesBurnt": 9,
+                    "activityId": "5dc4f0c3-0a66-45e9-8456-d698a87ae01c",
+                    "createdAt": 1735243800867
+                },
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 38,
+                    "name": "Walking",
+                    "time": 20,
+                    "calories": 0,
+                    "caloriesBurnt": 92,
+                    "activityId": "3a6c142f-8ed0-4f66-930d-88cffae60f09",
+                    "createdAt": 1735317600715
+                }
+            ],
+            "source": {
+                "name": "garmin-connect",
+                "id": "27728fae-bb13-47c5-8059-a2d1194dca5c"
+            },
+            "calories": 1620.6889999999999,
+            "caloriesBurnt": 102
+        },
+        {
+            "id": "676d69ff8bf414b807451db9",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "measurementDate": 1735223772782,
+            "lastmodifiedDate": 1735223772782,
+            "value": [
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 60,
+                    "name": "Walking",
+                    "time": 50,
+                    "calories": 262.5,
+                    "caloriesBurnt": 693,
+                    "activityId": "0c2ab8fd-278b-40a4-8911-783a5a8b4f99",
+                    "createdAt": 1735223807518
+                }
+            ],
+            "source": {
+                "name": "restore-me",
+                "id": "2ff938bc-436e-4888-becb-352e80906db0"
+            },
+            "calories": 1620.6889999999999,
+            "caloriesBurnt": 693
+        },
+        {
+            "id": "676ce8ae21f4276cd9ea5c21",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "measurementDate": 1735186899000,
+            "lastmodifiedDate": 1735227600207,
+            "value": [
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 1628,
+                    "name": "Walking",
+                    "time": 20,
+                    "calories": 0,
+                    "caloriesBurnt": 68,
+                    "activityId": "e1d8287a-0c5d-452f-9858-98c21fbb9db9",
+                    "createdAt": 1735190702805
+                },
+                {
+                    "id": "6769b60676414f37209b0f20",
+                    "timeLogged": 490,
+                    "name": "Gym & Fitness Equipment",
+                    "time": 20,
+                    "calories": 0,
+                    "caloriesBurnt": 45,
+                    "activityId": "f2e72a56-627b-4e5e-8ba1-2e70b14dcca4",
+                    "createdAt": 1735191258515
+                },
+                {
+                    "id": "6769b57b76414f37209b0f1e",
+                    "timeLogged": 1237,
+                    "name": "Running",
+                    "time": 20,
+                    "calories": 0,
+                    "caloriesBurnt": 95,
+                    "activityId": "dd293dc9-8f65-4841-92a8-9bbe3a02c515",
+                    "createdAt": 1735195800628
+                },
+                {
+                    "id": "6769b60676414f37209b0f20",
+                    "timeLogged": 3850,
+                    "name": "Gym & Fitness Equipment",
+                    "time": 20,
+                    "calories": 0,
+                    "caloriesBurnt": 213,
+                    "activityId": "481b13c2-3672-4e80-afdf-cdc469a8da8d",
+                    "createdAt": 1735217400853
+                },
+                {
+                    "id": "6769b60676414f37209b0f20",
+                    "timeLogged": 742,
+                    "name": "Gym & Fitness Equipment",
+                    "time": 20,
+                    "calories": 0,
+                    "caloriesBurnt": 19,
+                    "activityId": "faa75060-0045-4876-abd0-0c9246a4a1d1",
+                    "createdAt": 1735224600971
+                },
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 7,
+                    "name": "Walking",
+                    "time": 20,
+                    "calories": 0,
+                    "caloriesBurnt": 0,
+                    "activityId": "b774ecd1-8713-4f38-8c20-f0b5ecde25fc",
+                    "createdAt": 1735227000466
+                },
+                {
+                    "id": "6769b59176414f37209b0f1f",
+                    "timeLogged": 781,
+                    "name": "Cycling",
+                    "time": 20,
+                    "calories": 0,
+                    "caloriesBurnt": 7774,
+                    "activityId": "e77f42e1-2976-4a11-bbb6-6803588eb405",
+                    "createdAt": 1735227600206
+                }
+            ],
+            "source": {
+                "name": "garmin-connect",
+                "id": "2e25b76e-be65-4cc9-abfe-4479bd1c31d3"
+            },
+            "calories": 1620.6889999999999,
+            "caloriesBurnt": 8214
+        },
+        {
+            "id": "676cf20921f4276cd9ea72a0",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "measurementDate": 1735151280000,
+            "lastmodifiedDate": 1735193192826,
+            "value": [
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 1628,
+                    "name": "Walking",
+                    "time": 20,
+                    "calories": 0,
+                    "caloriesBurnt": 67,
+                    "activityId": "b7d2eb80-ca73-4e40-a0f8-72897fa7fe6f",
+                    "createdAt": 1735193097636
+                },
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 1628,
+                    "name": "Walking",
+                    "time": 20,
+                    "calories": 0,
+                    "caloriesBurnt": 67,
+                    "activityId": "6c7dc88d-fe81-461d-ad94-5dad10506319",
+                    "createdAt": 1735193192826
+                }
+            ],
+            "source": {
+                "name": "garmin-connect",
+                "id": "cdf51416-0150-45f9-8a4b-461775b6a284"
+            },
+            "calories": 1620.6889999999999,
+            "caloriesBurnt": 134
+        },
+        {
+            "id": "677e0b7eb2bc3b4015aa9496",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "measurementDate": 1733462400000,
+            "lastmodifiedDate": 1733462400000,
+            "value": [
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 2,
+                    "name": "Walking",
+                    "time": 50,
+                    "calories": 262.5,
+                    "caloriesBurnt": 78.75,
+                    "activityId": "47668da3-907c-49ca-bbe6-9b94fa0ddf9d",
+                    "createdAt": 1736313726291
+                }
+            ],
+            "source": {
+                "name": "restore-me",
+                "id": "ee9c30c3-e8e6-4fbf-ab69-2db81bb0911d"
+            },
+            "calories": 1620.6889999999999,
+            "caloriesBurnt": 78.75
+        },
+        {
+            "id": "677b59f0e689e25090fdbb09",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "measurementDate": 1731058676000,
+            "lastmodifiedDate": 1736154000221,
+            "value": [
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 2,
+                    "name": "Walking",
+                    "time": 20,
+                    "calories": 0,
+                    "caloriesBurnt": 9,
+                    "activityId": "9da26daf-1fb3-4405-b5f1-77a0c9e2163f",
+                    "createdAt": 1736137200077
+                },
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 2,
+                    "name": "Walking",
+                    "time": 20,
+                    "calories": 0,
+                    "caloriesBurnt": 9,
+                    "activityId": "b869e0bd-9086-4dd7-ae4d-307a70e7d6e5",
+                    "createdAt": 1736137200078
+                },
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 2,
+                    "name": "Walking",
+                    "time": 20,
+                    "calories": 0,
+                    "caloriesBurnt": 9,
+                    "activityId": "f677fbdd-1171-48cd-a242-745dadcadf0d",
+                    "createdAt": 1736137800808
+                },
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 2,
+                    "name": "Walking",
+                    "time": 20,
+                    "calories": 0,
+                    "caloriesBurnt": 9,
+                    "activityId": "43ffddf6-dd50-472c-8049-9757eee4dd12",
+                    "createdAt": 1736138400556
+                },
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 2,
+                    "name": "Walking",
+                    "time": 20,
+                    "calories": 0,
+                    "caloriesBurnt": 9,
+                    "activityId": "17672e73-32ea-4a4e-a86c-ac867a8198f6",
+                    "createdAt": 1736138400557
+                },
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 2,
+                    "name": "Walking",
+                    "time": 20,
+                    "calories": 0,
+                    "caloriesBurnt": 9,
+                    "activityId": "8037f918-b7e5-4050-b577-6141d20b5801",
+                    "createdAt": 1736140200830
+                },
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 2,
+                    "name": "Walking",
+                    "time": 20,
+                    "calories": 0,
+                    "caloriesBurnt": 9,
+                    "activityId": "3303fea6-fdc8-4869-9ffb-adcb62595186",
+                    "createdAt": 1736142000109
+                },
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 2,
+                    "name": "Walking",
+                    "time": 20,
+                    "calories": 0,
+                    "caloriesBurnt": 9,
+                    "activityId": "01767a5f-3d2e-40e6-801f-7eca3427acb2",
+                    "createdAt": 1736142000109
+                },
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 2,
+                    "name": "Walking",
+                    "time": 20,
+                    "calories": 0,
+                    "caloriesBurnt": 9,
+                    "activityId": "040ebf36-10ae-4091-a726-afac7ce538d7",
+                    "createdAt": 1736142000110
+                },
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 2,
+                    "name": "Walking",
+                    "time": 20,
+                    "calories": 0,
+                    "caloriesBurnt": 9,
+                    "activityId": "e55eb277-6aeb-4300-ad15-197ed15d9436",
+                    "createdAt": 1736142000110
+                },
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 2,
+                    "name": "Walking",
+                    "time": 20,
+                    "calories": 0,
+                    "caloriesBurnt": 9,
+                    "activityId": "efac504f-1abc-4cce-ab70-528b962a95d9",
+                    "createdAt": 1736142000110
+                },
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 2,
+                    "name": "Walking",
+                    "time": 20,
+                    "calories": 0,
+                    "caloriesBurnt": 9,
+                    "activityId": "2b08e8e2-b0c4-4405-9483-5dd7804beaa8",
+                    "createdAt": 1736142600855
+                },
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 2,
+                    "name": "Walking",
+                    "time": 20,
+                    "calories": 0,
+                    "caloriesBurnt": 9,
+                    "activityId": "e50c7c92-e4f6-454d-998f-5e61feb2f800",
+                    "createdAt": 1736148600419
+                },
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 2,
+                    "name": "Walking",
+                    "time": 20,
+                    "calories": 0,
+                    "caloriesBurnt": 9,
+                    "activityId": "850a42f7-6cbe-419d-95cf-3eac09725a61",
+                    "createdAt": 1736152200956
+                },
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 2,
+                    "name": "Walking",
+                    "time": 20,
+                    "calories": 0,
+                    "caloriesBurnt": 9,
+                    "activityId": "5f8e4c77-44ed-4828-83a3-fd764e751a5c",
+                    "createdAt": 1736152200956
+                },
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 2,
+                    "name": "Walking",
+                    "time": 20,
+                    "calories": 0,
+                    "caloriesBurnt": 9,
+                    "activityId": "3f75dd9d-68b8-4eb4-9a2d-a0e0cc6773e2",
+                    "createdAt": 1736152200956
+                },
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 2,
+                    "name": "Walking",
+                    "time": 20,
+                    "calories": 0,
+                    "caloriesBurnt": 9,
+                    "activityId": "de6c00fb-801b-4ce6-9929-76ba29cb1d72",
+                    "createdAt": 1736152800715
+                },
+                {
+                    "id": "6769b62176414f37209b0f21",
+                    "timeLogged": 2,
+                    "name": "Walking",
+                    "time": 20,
+                    "calories": 0,
+                    "caloriesBurnt": 9,
+                    "activityId": "6b30890d-23a3-460d-bbe5-d02f3a90c093",
+                    "createdAt": 1736154000221
+                }
+            ],
+            "source": {
+                "name": "garmin-connect",
+                "id": "e2ec823b-f72a-495c-9db5-2638c7ced36a"
+            },
+            "calories": 1620.6889999999999,
+            "caloriesBurnt": 162
+        }
+    ],
+    "benchMarks": {
+        "lowBorderline": {
+            "min": 648.2755999999999,
+            "max": 1134.4823
+        },
+        "normal": {
+            "min": 1134.4823,
+            "max": 2106.8957
+        },
+        "highBorderline": {
+            "min": 2106.8957,
+            "max": 2593.1023999999998
+        }
+    }
+}
+
+const stepData = {
+    "goalAverage": 500,
+    "actualAverage": 464.2352941176471,
+    "unit": "steps",
+    "logs": [
+        {
+            "_id": "67caeda3e1280bb1ef716295",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 200,
+            "goal": 500,
+            "measurementDate": 1741352348000,
+            "lastmodifiedDate": 1741352348000,
+            "source": {
+                "id": "8e26de7b-24f4-4506-acc9-1d714c4c089a",
+                "name": "restore-me"
+            },
+            "createdAt": 1741352355372,
+            "updatedAt": 1741352355372
+        },
+        {
+            "_id": "67caed96e1280ba3e2716294",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 400,
+            "goal": 500,
+            "measurementDate": 1741352335000,
+            "lastmodifiedDate": 1741352335000,
+            "source": {
+                "id": "1d544ed3-3ffd-4e13-a173-41d81c6222bb",
+                "name": "restore-me"
+            },
+            "createdAt": 1741352342125,
+            "updatedAt": 1741352342125
+        },
+        {
+            "_id": "67caed75e1280b85b7716293",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 200,
+            "goal": 500,
+            "measurementDate": 1741352304000,
+            "lastmodifiedDate": 1741352304000,
+            "source": {
+                "id": "02fa7293-5b12-47a7-9c52-f67eae576ba5",
+                "name": "restore-me"
+            },
+            "createdAt": 1741352309756,
+            "updatedAt": 1741352309756
+        },
+        {
+            "_id": "67caeb56e1280b61fd716292",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 100,
+            "goal": 500,
+            "measurementDate": 1741351756000,
+            "lastmodifiedDate": 1741351756000,
+            "source": {
+                "id": "3fa41726-2932-40db-9adf-702ebcaefc14",
+                "name": "restore-me"
+            },
+            "createdAt": 1741351766405,
+            "updatedAt": 1741351766405
+        },
+        {
+            "_id": "67ca9ad815590866b5d55347",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6723041b7ee984705f6bfbe2stepcount07mar2025",
+                "name": "google-hc"
+            },
+            "createdAt": 1741332705615,
+            "goal": 500,
+            "lastmodifiedDate": 1741332705615,
+            "measurementDate": 1741332705615,
+            "type": "stepcount",
+            "value": 3987
+        },
+        {
+            "_id": "67ca661a15590866b5d367f7",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6723041b7ee984705f6bfbe2stepcount7Mar2025",
+                "name": "apple-hk"
+            },
+            "createdAt": 1741285800000,
+            "goal": 500,
+            "lastmodifiedDate": 1741285800000,
+            "measurementDate": 1741285800000,
+            "type": "stepcount",
+            "value": 2121
+        },
+        {
+            "_id": "67c98247e1280b794871627a",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 400,
+            "goal": 500,
+            "measurementDate": 1741259327000,
+            "lastmodifiedDate": 1741259327000,
+            "source": {
+                "id": "e68f8a7e-1b5e-41d5-b4d5-eccb74271a53",
+                "name": "restore-me"
+            },
+            "createdAt": 1741259335051,
+            "updatedAt": 1741259335051
+        },
+        {
+            "_id": "67c9883915590866b5cf7e51",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6723041b7ee984705f6bfbe2stepcount6Mar2025",
+                "name": "apple-hk"
+            },
+            "createdAt": 1741199400000,
+            "goal": 500,
+            "lastmodifiedDate": 1741199400000,
+            "measurementDate": 1741199400000,
+            "type": "stepcount",
+            "value": 28
+        },
+        {
+            "_id": "67c7bf8915590866b5c021c5",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "name": "apple-hk",
+                "id": "6723041b7ee984705f6bfbe2stepcount5Mar2025"
+            },
+            "createdAt": 1741113000000,
+            "goal": 500,
+            "lastmodifiedDate": 1741113000000,
+            "measurementDate": 1741113000000,
+            "type": "stepcount",
+            "value": 4272
+        },
+        {
+            "_id": "67c7388fe1280b6cba716211",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 5,
+            "goal": 500,
+            "measurementDate": 1741109379000,
+            "lastmodifiedDate": 1741109379000,
+            "source": {
+                "id": "719bfb4a-4073-45a3-99cb-8fcec375f7b7",
+                "name": "restore-me"
+            },
+            "createdAt": 1741109391299,
+            "updatedAt": 1741109391299
+        },
+        {
+            "_id": "67c6793ae1280b77797161f6",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 1000,
+            "goal": 500,
+            "measurementDate": 1741060380000,
+            "lastmodifiedDate": 1741060380000,
+            "source": {
+                "id": "5d4589e4-7473-4dbe-b279-b4b5267d6940",
+                "name": "restore-me"
+            },
+            "createdAt": 1741060410541,
+            "updatedAt": 1741060410541
+        },
+        {
+            "_id": "67c5b6385fa6f51222cbbded",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 500,
+            "goal": 500,
+            "measurementDate": 1741010460000,
+            "lastmodifiedDate": 1741010460000,
+            "source": {
+                "id": "a520e95a-f57e-4044-a41d-51dbd101262b",
+                "name": "restore-me"
+            },
+            "createdAt": 1741010488679,
+            "updatedAt": 1741010488679
+        },
+        {
+            "_id": "67c5b3c55fa6f553b6cbbdec",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 500,
+            "goal": 500,
+            "measurementDate": 1741009800000,
+            "lastmodifiedDate": 1741009800000,
+            "source": {
+                "id": "41e25168-18c1-4cde-a06c-55938377effd",
+                "name": "restore-me"
+            },
+            "createdAt": 1741009861766,
+            "updatedAt": 1741009861766
+        },
+        {
+            "_id": "67c5afe45fa6f5f35dcbbdeb",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 1000,
+            "goal": 500,
+            "measurementDate": 1741008840000,
+            "lastmodifiedDate": 1741008840000,
+            "source": {
+                "id": "92de854f-e509-4f36-bc39-f435b2995255",
+                "name": "restore-me"
+            },
+            "createdAt": 1741008868067,
+            "updatedAt": 1741008868067
+        },
+        {
+            "_id": "67c597c05fa6f50cf6cbbde9",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 500,
+            "goal": 500,
+            "measurementDate": 1741002660000,
+            "lastmodifiedDate": 1741002660000,
+            "source": {
+                "id": "d71d3b94-b2aa-49d2-912e-5e33cce38a96",
+                "name": "restore-me"
+            },
+            "createdAt": 1741002688581,
+            "updatedAt": 1741002688581
+        },
+        {
+            "_id": "67c597ce5fa6f594bdcbbdea",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 600,
+            "goal": 500,
+            "measurementDate": 1741002660000,
+            "lastmodifiedDate": 1741002660000,
+            "source": {
+                "id": "6c355689-71d9-4538-b8eb-39ffd7bc090f",
+                "name": "restore-me"
+            },
+            "createdAt": 1741002702685,
+            "updatedAt": 1741002702685
+        },
+        {
+            "_id": "67c559a713c06aa22289c068",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6723041b7ee984705f6bfbe2stepcount3Mar2025",
+                "name": "apple-hk"
+            },
+            "createdAt": 1740940200000,
+            "goal": 500,
+            "lastmodifiedDate": 1740940200000,
+            "measurementDate": 1740940200000,
+            "type": "stepcount",
+            "value": 5708.424871627288
+        },
+        {
+            "_id": "67ca9ad815590866b5d55346",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6723041b7ee984705f6bfbe2stepcount02mar2025",
+                "name": "google-hc"
+            },
+            "createdAt": 1740940199999,
+            "goal": 500,
+            "lastmodifiedDate": 1740940199999,
+            "measurementDate": 1740940199999,
+            "type": "stepcount",
+            "value": 47251
+        },
+        {
+            "_id": "67c507ee13c06aa22286551e",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6723041b7ee984705f6bfbe2stepcount2Mar2025",
+                "name": "apple-hk"
+            },
+            "createdAt": 1740853800000,
+            "goal": 500,
+            "lastmodifiedDate": 1740853800000,
+            "measurementDate": 1740853800000,
+            "type": "stepcount",
+            "value": 35
+        },
+        {
+            "_id": "67c5706d5fa6f5a8f6cbbda8",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 240,
+            "goal": 10000,
+            "measurementDate": 1740819808000,
+            "lastmodifiedDate": 1740819808000,
+            "source": {
+                "id": "29f3886d-0dc6-4164-a922-f7fc70015120",
+                "name": "restore-me"
+            },
+            "createdAt": 1740992621264,
+            "updatedAt": 1740992621264
+        },
+        {
+            "_id": "67c3c9a5393706c3602b3fb3",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "name": "apple-hk",
+                "id": "6723041b7ee984705f6bfbe2stepcount1Mar2025"
+            },
+            "createdAt": 1740767400000,
+            "goal": 500,
+            "lastmodifiedDate": 1740767400000,
+            "measurementDate": 1740767400000,
+            "type": "stepcount",
+            "value": 142
+        },
+        {
+            "_id": "67c170e5b4a0e5477676ed89",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "name": "apple-hk",
+                "id": "6723041b7ee984705f6bfbe2stepcount28Feb2025"
+            },
+            "createdAt": 1740681000000,
+            "goal": 500,
+            "lastmodifiedDate": 1740681000000,
+            "measurementDate": 1740681000000,
+            "type": "stepcount",
+            "value": 3116
+        },
+        {
+            "_id": "67bfd7a9b4a0e547765e2bac",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6723041b7ee984705f6bfbe2stepcount27Feb2025",
+                "name": "apple-hk"
+            },
+            "createdAt": 1740594600000,
+            "goal": 500,
+            "lastmodifiedDate": 1740594600000,
+            "measurementDate": 1740594600000,
+            "type": "stepcount",
+            "value": 3825
+        },
+        {
+            "_id": "67bed3550321c09c78cf7cac",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6723041b7ee984705f6bfbe2stepcount26Feb2025",
+                "name": "apple-hk"
+            },
+            "createdAt": 1740508200000,
+            "goal": 500,
+            "lastmodifiedDate": 1740508200000,
+            "measurementDate": 1740508200000,
+            "type": "stepcount",
+            "value": 19
+        },
+        {
+            "_id": "67bdd6b40321c09c78c5e016",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "name": "apple-hk",
+                "id": "6723041b7ee984705f6bfbe2stepcount25Feb2025"
+            },
+            "createdAt": 1740421800000,
+            "goal": 500,
+            "lastmodifiedDate": 1740421800000,
+            "measurementDate": 1740421800000,
+            "type": "stepcount",
+            "value": 59
+        },
+        {
+            "_id": "67bc06bdc82c960e9c1b9025",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6723041b7ee984705f6bfbe2stepcount24Feb2025",
+                "name": "apple-hk"
+            },
+            "createdAt": 1740335400000,
+            "goal": 500,
+            "lastmodifiedDate": 1740335400000,
+            "measurementDate": 1740335400000,
+            "type": "stepcount",
+            "value": 2934
+        },
+        {
+            "_id": "67bc06bdc82c960e9c1b9024",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6723041b7ee984705f6bfbe2stepcount23Feb2025",
+                "name": "apple-hk"
+            },
+            "createdAt": 1740249000000,
+            "goal": 500,
+            "lastmodifiedDate": 1740249000000,
+            "measurementDate": 1740249000000,
+            "type": "stepcount",
+            "value": 136
+        },
+        {
+            "_id": "67bc06bdc82c960e9c1b9022",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6723041b7ee984705f6bfbe2stepcount22Feb2025",
+                "name": "apple-hk"
+            },
+            "createdAt": 1740162600000,
+            "goal": 500,
+            "lastmodifiedDate": 1740162600000,
+            "measurementDate": 1740162600000,
+            "type": "stepcount",
+            "value": 814
+        },
+        {
+            "_id": "67b7fe48c82c960e9c086811",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "name": "apple-hk",
+                "id": "6723041b7ee984705f6bfbe2stepcount21Feb2025"
+            },
+            "createdAt": 1740076200000,
+            "goal": 500,
+            "lastmodifiedDate": 1740076200000,
+            "measurementDate": 1740076200000,
+            "type": "stepcount",
+            "value": 3632.198131095547
+        },
+        {
+            "_id": "67ca9ad815590866b5d55345",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6723041b7ee984705f6bfbe2stepcount20feb2025",
+                "name": "google-hc"
+            },
+            "createdAt": 1740076199999,
+            "goal": 500,
+            "lastmodifiedDate": 1740076199999,
+            "measurementDate": 1740076199999,
+            "type": "stepcount",
+            "value": 41276
+        },
+        {
+            "_id": "67b6febffbbb5282f223acbd",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 111,
+            "goal": 1,
+            "measurementDate": 1740046006000,
+            "lastmodifiedDate": 1740046006000,
+            "source": {
+                "id": "de6a7771-c1e8-4fe2-aa55-086dd68d7b4a",
+                "name": "restore-me"
+            },
+            "createdAt": 1740046015580,
+            "updatedAt": 1740046015580
+        },
+        {
+            "_id": "67b6f183fbbb5266ff23acbb",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 59,
+            "goal": 1,
+            "measurementDate": 1740042621000,
+            "lastmodifiedDate": 1740042621000,
+            "source": {
+                "id": "683e1385-95d5-4126-9cb8-a61cd9c37abb",
+                "name": "restore-me"
+            },
+            "createdAt": 1740042627593,
+            "updatedAt": 1740042627593
+        },
+        {
+            "_id": "67b6f07cc82c960e9c0221eb",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6723041b7ee984705f6bfbe2stepcount20Feb2025",
+                "name": "apple-hk"
+            },
+            "createdAt": 1739989800000,
+            "goal": 500,
+            "lastmodifiedDate": 1739989800000,
+            "measurementDate": 1739989800000,
+            "type": "stepcount",
+            "value": 5121
+        },
+        {
+            "_id": "67b56802fbf942d14b9ea57e",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 222,
+            "goal": 1,
+            "measurementDate": 1739941884000,
+            "lastmodifiedDate": 1739941884000,
+            "source": {
+                "id": "3a4c1077-b41f-459a-af9d-59e3dff49d61",
+                "name": "restore-me"
+            },
+            "createdAt": 1739941890862,
+            "updatedAt": 1739941890862
+        },
+        {
+            "_id": "67b567f2fbf942acc19ea57d",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 200,
+            "goal": 1,
+            "measurementDate": 1739941850000,
+            "lastmodifiedDate": 1739941850000,
+            "source": {
+                "id": "de432eee-9cb5-4d98-bfca-877107ec2560",
+                "name": "restore-me"
+            },
+            "createdAt": 1739941874487,
+            "updatedAt": 1739941874487
+        },
+        {
+            "_id": "67b56611fbf9423d269ea57c",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 100,
+            "goal": 1,
+            "measurementDate": 1739941380000,
+            "lastmodifiedDate": 1739941380000,
+            "source": {
+                "id": "7003d0b7-933d-4c7e-9626-8a1d2b77de11",
+                "name": "restore-me"
+            },
+            "createdAt": 1739941393891,
+            "updatedAt": 1739941393891
+        },
+        {
+            "_id": "67b564e7fbf9427ba99ea577",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 222,
+            "goal": 1,
+            "measurementDate": 1739941088000,
+            "lastmodifiedDate": 1739941088000,
+            "source": {
+                "id": "56f039c3-da9b-45a7-bc70-77e6415ead6b",
+                "name": "restore-me"
+            },
+            "createdAt": 1739941095085,
+            "updatedAt": 1739941095085
+        },
+        {
+            "_id": "67b55f99fbf94235549ea56f",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 999,
+            "goal": 1,
+            "measurementDate": 1739939733000,
+            "lastmodifiedDate": 1739939733000,
+            "source": {
+                "id": "a1033e61-e8d9-4ce0-aec5-258e2a70a7b2",
+                "name": "restore-me"
+            },
+            "createdAt": 1739939737386,
+            "updatedAt": 1739939737386
+        },
+        {
+            "_id": "67b5612336040ac59f944af2",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "name": "apple-hk",
+                "id": "6723041b7ee984705f6bfbe2stepcount19Feb2025"
+            },
+            "createdAt": 1739903400000,
+            "goal": 500,
+            "lastmodifiedDate": 1739903400000,
+            "measurementDate": 1739903400000,
+            "type": "stepcount",
+            "value": 3143
+        },
+        {
+            "_id": "67b86010c82c960e9c10a2e8",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "name": "apple-hk",
+                "id": "6723041b7ee984705f6bfbe2stepcount18Feb2025"
+            },
+            "createdAt": 1739817000000,
+            "goal": 500,
+            "lastmodifiedDate": 1739817000000,
+            "measurementDate": 1739817000000,
+            "type": "stepcount",
+            "value": 42
+        },
+        {
+            "_id": "67b86010c82c960e9c10a2ed",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6723041b7ee984705f6bfbe2stepcount17Feb2025",
+                "name": "apple-hk"
+            },
+            "createdAt": 1739730600000,
+            "goal": 500,
+            "lastmodifiedDate": 1739730600000,
+            "measurementDate": 1739730600000,
+            "type": "stepcount",
+            "value": 3332
+        },
+        {
+            "_id": "67b86010c82c960e9c10a2f0",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "name": "apple-hk",
+                "id": "6723041b7ee984705f6bfbe2stepcount16Feb2025"
+            },
+            "createdAt": 1739644200000,
+            "goal": 500,
+            "lastmodifiedDate": 1739644200000,
+            "measurementDate": 1739644200000,
+            "type": "stepcount",
+            "value": 23
+        },
+        {
+            "_id": "67b86010c82c960e9c10a2ec",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "name": "apple-hk",
+                "id": "6723041b7ee984705f6bfbe2stepcount15Feb2025"
+            },
+            "createdAt": 1739557800000,
+            "goal": 500,
+            "lastmodifiedDate": 1739557800000,
+            "measurementDate": 1739557800000,
+            "type": "stepcount",
+            "value": 53
+        },
+        {
+            "_id": "67aee8ba49441e8a56951b00",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "name": "apple-hk",
+                "id": "6723041b7ee984705f6bfbe2stepcount14Feb2025"
+            },
+            "createdAt": 1739471400000,
+            "goal": 500,
+            "lastmodifiedDate": 1739471400000,
+            "measurementDate": 1739471400000,
+            "type": "stepcount",
+            "value": 3732
+        },
+        {
+            "_id": "67ad844a401feb8d655f14fd",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 3,
+            "goal": 1,
+            "measurementDate": 1739424780000,
+            "lastmodifiedDate": 1739424780000,
+            "source": {
+                "id": "cd9abbbe-324a-45ed-9186-6d90259cc227",
+                "name": "restore-me"
+            },
+            "createdAt": 1739424842430,
+            "updatedAt": 1739424842430
+        },
+        {
+            "_id": "67ad825d401feb2ec05f14fa",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 33,
+            "goal": 1,
+            "measurementDate": 1739424300000,
+            "lastmodifiedDate": 1739424300000,
+            "source": {
+                "id": "7fdf3230-1fe9-4e50-87ec-be4b30f64faa",
+                "name": "restore-me"
+            },
+            "createdAt": 1739424349465,
+            "updatedAt": 1739424349465
+        },
+        {
+            "_id": "67ada98149441e8a568d8751",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "name": "apple-hk",
+                "id": "6723041b7ee984705f6bfbe2stepcount13Feb2025"
+            },
+            "createdAt": 1739385000000,
+            "goal": 500,
+            "lastmodifiedDate": 1739385000000,
+            "measurementDate": 1739385000000,
+            "type": "stepcount",
+            "value": 27
+        },
+        {
+            "_id": "67ac260749441e8a567e9d33",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "name": "apple-hk",
+                "id": "6723041b7ee984705f6bfbe2stepcount12Feb2025"
+            },
+            "createdAt": 1739298600000,
+            "goal": 500,
+            "lastmodifiedDate": 1739298600000,
+            "measurementDate": 1739298600000,
+            "type": "stepcount",
+            "value": 3042
+        },
+        {
+            "_id": "67aa793849441e8a5671e6d8",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6723041b7ee984705f6bfbe2-garmin-connect-2025-02-11",
+                "name": "garmin-connect"
+            },
+            "goal": 7500,
+            "lastmodifiedDate": 1739212200000,
+            "measurementDate": 1739212200000,
+            "type": "stepcount",
+            "value": 0
+        },
+        {
+            "_id": "67aaec2549441e8a5674c9fb",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "name": "apple-hk",
+                "id": "6723041b7ee984705f6bfbe2stepcount11Feb2025"
+            },
+            "createdAt": 1739212200000,
+            "goal": 500,
+            "lastmodifiedDate": 1739212200000,
+            "measurementDate": 1739212200000,
+            "type": "stepcount",
+            "value": 44
+        },
+        {
+            "_id": "67ca9ad815590866b5d55344",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6723041b7ee984705f6bfbe2stepcount10feb2025",
+                "name": "google-hc"
+            },
+            "createdAt": 1739212199999,
+            "goal": 500,
+            "lastmodifiedDate": 1739212199999,
+            "measurementDate": 1739212199999,
+            "type": "stepcount",
+            "value": 27579
+        },
+        {
+            "_id": "67a9256049441e8a5668766b",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6723041b7ee984705f6bfbe2-garmin-connect-2025-02-10",
+                "name": "garmin-connect"
+            },
+            "goal": 7500,
+            "lastmodifiedDate": 1739125800000,
+            "measurementDate": 1739125800000,
+            "type": "stepcount",
+            "value": 272
+        },
+        {
+            "_id": "67a9720b49441e8a566914f8",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6723041b7ee984705f6bfbe2stepcount10Feb2025",
+                "name": "apple-hk"
+            },
+            "createdAt": 1739125800000,
+            "goal": 500,
+            "lastmodifiedDate": 1739125800000,
+            "measurementDate": 1739125800000,
+            "type": "stepcount",
+            "value": 3103
+        },
+        {
+            "_id": "67a83b0049441e8a56668182",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6723041b7ee984705f6bfbe2-garmin-connect-2025-02-09",
+                "name": "garmin-connect"
+            },
+            "goal": 7500,
+            "lastmodifiedDate": 1739039400000,
+            "measurementDate": 1739039400000,
+            "type": "stepcount",
+            "value": 484
+        },
+        {
+            "_id": "67a855be49441e8a5666be1e",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "name": "apple-hk",
+                "id": "6723041b7ee984705f6bfbe2stepcount9Feb2025"
+            },
+            "createdAt": 1739039400000,
+            "goal": 500,
+            "lastmodifiedDate": 1739039400000,
+            "measurementDate": 1739039400000,
+            "type": "stepcount",
+            "value": 42
+        },
+        {
+            "_id": "67a855be49441e8a5666be1a",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "name": "apple-hk",
+                "id": "6723041b7ee984705f6bfbe2stepcount8Feb2025"
+            },
+            "createdAt": 1738953000000,
+            "goal": 500,
+            "lastmodifiedDate": 1738953000000,
+            "measurementDate": 1738953000000,
+            "type": "stepcount",
+            "value": 18
+        },
+        {
+            "_id": "67a5e6bc31d90d75a4d408ef",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 10,
+            "goal": 0,
+            "measurementDate": 1738925727000,
+            "lastmodifiedDate": 1738925727000,
+            "source": {
+                "id": "c8cc0863-892c-417c-bbd3-05b204b8688a",
+                "name": "restore-me"
+            },
+            "createdAt": 1738925756652,
+            "updatedAt": 1738925756652
+        },
+        {
+            "_id": "67a5e56e31d90dbf32d408e3",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 600,
+            "goal": 0,
+            "measurementDate": 1738925416000,
+            "lastmodifiedDate": 1738925416000,
+            "source": {
+                "id": "4a61865a-11ed-4582-b565-4a108a051ff6",
+                "name": "restore-me"
+            },
+            "createdAt": 1738925422717,
+            "updatedAt": 1738925422717
+        },
+        {
+            "_id": "67a5d32e49441e8a565c7e51",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "name": "apple-hk",
+                "id": "6723041b7ee984705f6bfbe2stepcount7Feb2025"
+            },
+            "createdAt": 1738866600000,
+            "goal": 500,
+            "lastmodifiedDate": 1738866600000,
+            "measurementDate": 1738866600000,
+            "type": "stepcount",
+            "value": 3434
+        },
+        {
+            "_id": "67b86010c82c960e9c10a2e9",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6723041b7ee984705f6bfbe2stepcount6Feb2025",
+                "name": "apple-hk"
+            },
+            "createdAt": 1738780200000,
+            "goal": 500,
+            "lastmodifiedDate": 1738780200000,
+            "measurementDate": 1738780200000,
+            "type": "stepcount",
+            "value": 3196
+        },
+        {
+            "_id": "67b86010c82c960e9c10a2f7",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6723041b7ee984705f6bfbe2stepcount5Feb2025",
+                "name": "apple-hk"
+            },
+            "createdAt": 1738693800000,
+            "goal": 500,
+            "lastmodifiedDate": 1738693800000,
+            "measurementDate": 1738693800000,
+            "type": "stepcount",
+            "value": 33
+        },
+        {
+            "_id": "67b86010c82c960e9c10a2ee",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6723041b7ee984705f6bfbe2stepcount4Feb2025",
+                "name": "apple-hk"
+            },
+            "createdAt": 1738607400000,
+            "goal": 500,
+            "lastmodifiedDate": 1738607400000,
+            "measurementDate": 1738607400000,
+            "type": "stepcount",
+            "value": 3543
+        },
+        {
+            "_id": "67b86010c82c960e9c10a2ef",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "name": "apple-hk",
+                "id": "6723041b7ee984705f6bfbe2stepcount3Feb2025"
+            },
+            "createdAt": 1738521000000,
+            "goal": 500,
+            "lastmodifiedDate": 1738521000000,
+            "measurementDate": 1738521000000,
+            "type": "stepcount",
+            "value": 20
+        },
+        {
+            "_id": "67b86010c82c960e9c10a2f6",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6723041b7ee984705f6bfbe2stepcount2Feb2025",
+                "name": "apple-hk"
+            },
+            "createdAt": 1738434600000,
+            "goal": 10000,
+            "lastmodifiedDate": 1738434600000,
+            "measurementDate": 1738434600000,
+            "type": "stepcount",
+            "value": 55
+        },
+        {
+            "_id": "67b86010c82c960e9c10a2ea",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "name": "apple-hk",
+                "id": "6723041b7ee984705f6bfbe2stepcount1Feb2025"
+            },
+            "createdAt": 1738348200000,
+            "goal": 10000,
+            "lastmodifiedDate": 1738348200000,
+            "measurementDate": 1738348200000,
+            "type": "stepcount",
+            "value": 32
+        },
+        {
+            "_id": "67b86010c82c960e9c10a2e7",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "name": "apple-hk",
+                "id": "6723041b7ee984705f6bfbe2stepcount31Jan2025"
+            },
+            "createdAt": 1738261800000,
+            "goal": 10000,
+            "lastmodifiedDate": 1738261800000,
+            "measurementDate": 1738261800000,
+            "type": "stepcount",
+            "value": 4193
+        },
+        {
+            "_id": "67b86010c82c960e9c10a2f8",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6723041b7ee984705f6bfbe2stepcount30Jan2025",
+                "name": "apple-hk"
+            },
+            "createdAt": 1738175400000,
+            "goal": 10000,
+            "lastmodifiedDate": 1738175400000,
+            "measurementDate": 1738175400000,
+            "type": "stepcount",
+            "value": 97
+        },
+        {
+            "_id": "67b86010c82c960e9c10a2f4",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "name": "apple-hk",
+                "id": "6723041b7ee984705f6bfbe2stepcount29Jan2025"
+            },
+            "createdAt": 1738089000000,
+            "goal": 10000,
+            "lastmodifiedDate": 1738089000000,
+            "measurementDate": 1738089000000,
+            "type": "stepcount",
+            "value": 20
+        },
+        {
+            "_id": "67b86010c82c960e9c10a2f5",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6723041b7ee984705f6bfbe2stepcount28Jan2025",
+                "name": "apple-hk"
+            },
+            "createdAt": 1738002600000,
+            "goal": 10000,
+            "lastmodifiedDate": 1738002600000,
+            "measurementDate": 1738002600000,
+            "type": "stepcount",
+            "value": 34
+        },
+        {
+            "_id": "67b86010c82c960e9c10a2fa",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6723041b7ee984705f6bfbe2stepcount27Jan2025",
+                "name": "apple-hk"
+            },
+            "createdAt": 1737916200000,
+            "goal": 10000,
+            "lastmodifiedDate": 1737916200000,
+            "measurementDate": 1737916200000,
+            "type": "stepcount",
+            "value": 34
+        },
+        {
+            "_id": "67b86010c82c960e9c10a2f3",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6723041b7ee984705f6bfbe2stepcount26Jan2025",
+                "name": "apple-hk"
+            },
+            "createdAt": 1737829800000,
+            "goal": 1,
+            "lastmodifiedDate": 1737829800000,
+            "measurementDate": 1737829800000,
+            "type": "stepcount",
+            "value": 83
+        },
+        {
+            "_id": "67b86010c82c960e9c10a2e6",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "name": "apple-hk",
+                "id": "6723041b7ee984705f6bfbe2stepcount24Jan2025"
+            },
+            "createdAt": 1737657000000,
+            "goal": 1,
+            "lastmodifiedDate": 1737657000000,
+            "measurementDate": 1737657000000,
+            "type": "stepcount",
+            "value": 2987
+        },
+        {
+            "_id": "67b86010c82c960e9c10a2f9",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6723041b7ee984705f6bfbe2stepcount23Jan2025",
+                "name": "apple-hk"
+            },
+            "createdAt": 1737570600000,
+            "goal": 1,
+            "lastmodifiedDate": 1737570600000,
+            "measurementDate": 1737570600000,
+            "type": "stepcount",
+            "value": 34
+        },
+        {
+            "_id": "67b86010c82c960e9c10a2f2",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "name": "apple-hk",
+                "id": "6723041b7ee984705f6bfbe2stepcount22Jan2025"
+            },
+            "createdAt": 1737484200000,
+            "goal": 1,
+            "lastmodifiedDate": 1737484200000,
+            "measurementDate": 1737484200000,
+            "type": "stepcount",
+            "value": 52
+        },
+        {
+            "_id": "6788c040111bce331150ebab",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 200,
+            "goal": 0,
+            "measurementDate": 1737015352000,
+            "lastmodifiedDate": 1737015352000,
+            "source": {
+                "id": "ae8704d5-5290-4124-b350-d7d3455b1eb1",
+                "name": "restore-me"
+            },
+            "createdAt": 1737015360238,
+            "updatedAt": 1737015360238
+        },
+        {
+            "_id": "6788c018111bce4e9b50ebaa",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 200,
+            "goal": 0,
+            "measurementDate": 1737015313000,
+            "lastmodifiedDate": 1737015313000,
+            "source": {
+                "id": "f41dd61b-a49d-41b1-b074-f437db17c176",
+                "name": "restore-me"
+            },
+            "createdAt": 1737015320517,
+            "updatedAt": 1737015320517
+        },
+        {
+            "_id": "6788bf0b111bcee61150eba9",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 66,
+            "goal": 0,
+            "measurementDate": 1737015033000,
+            "lastmodifiedDate": 1737015033000,
+            "source": {
+                "id": "41893a9f-083c-4c01-9b43-8337798ed8c9",
+                "name": "restore-me"
+            },
+            "createdAt": 1737015051101,
+            "updatedAt": 1737015051101
+        },
+        {
+            "_id": "6788b57fbd58bcb5b73851e9",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 30,
+            "goal": 0,
+            "measurementDate": 1737012596000,
+            "lastmodifiedDate": 1737012596000,
+            "source": {
+                "id": "49f1ea54-6754-4a31-a388-d058a4bb33f8",
+                "name": "restore-me"
+            },
+            "createdAt": 1737012607055,
+            "updatedAt": 1737012607055
+        },
+        {
+            "_id": "6788b51bbd58bc691c3851e8",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 20,
+            "goal": 0,
+            "measurementDate": 1737012496000,
+            "lastmodifiedDate": 1737012496000,
+            "source": {
+                "id": "0c4f03e0-6a7c-4c2f-8892-e227c0354de0",
+                "name": "restore-me"
+            },
+            "createdAt": 1737012507476,
+            "updatedAt": 1737012507476
+        },
+        {
+            "_id": "6788ae2dbd58bc251f3851e4",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 55,
+            "goal": 0,
+            "measurementDate": 1737010725000,
+            "lastmodifiedDate": 1737010725000,
+            "source": {
+                "id": "f24923fe-e0d3-48b9-ba07-1f2178621de1",
+                "name": "restore-me"
+            },
+            "createdAt": 1737010733854,
+            "updatedAt": 1737010733854
+        },
+        {
+            "_id": "6788ad1ebd58bc8dd13851e3",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 100,
+            "goal": 0,
+            "measurementDate": 1737010456000,
+            "lastmodifiedDate": 1737010456000,
+            "source": {
+                "id": "ed0c2ed0-f8d7-40f1-9be7-5b554666542d",
+                "name": "restore-me"
+            },
+            "createdAt": 1737010462173,
+            "updatedAt": 1737010462173
+        },
+        {
+            "_id": "6788ab2abd58bc5a103851e2",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 22,
+            "goal": 0,
+            "measurementDate": 1737009937000,
+            "lastmodifiedDate": 1737009937000,
+            "source": {
+                "id": "41a89d25-2704-4547-8602-df65384aea77",
+                "name": "restore-me"
+            },
+            "createdAt": 1737009962861,
+            "updatedAt": 1737009962861
+        },
+        {
+            "_id": "6788921cbd58bc534a3851df",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 35,
+            "goal": 0,
+            "measurementDate": 1737003538000,
+            "lastmodifiedDate": 1737003538000,
+            "source": {
+                "id": "7a5f4688-2991-4d19-b2dc-c9d9d04a99f6",
+                "name": "restore-me"
+            },
+            "createdAt": 1737003548482,
+            "updatedAt": 1737003548482
+        },
+        {
+            "_id": "678891eabd58bcd2de3851dc",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 25,
+            "goal": 0,
+            "measurementDate": 1737003491000,
+            "lastmodifiedDate": 1737003491000,
+            "source": {
+                "id": "445af3ee-19f0-4b1a-8a7b-e11c1d97a3ee",
+                "name": "restore-me"
+            },
+            "createdAt": 1737003498555,
+            "updatedAt": 1737003498555
+        },
+        {
+            "_id": "678891c6bd58bcbdba3851d9",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 12,
+            "goal": 0,
+            "measurementDate": 1737003408000,
+            "lastmodifiedDate": 1737003408000,
+            "source": {
+                "id": "7d85e6ee-4ad9-4a6d-8daf-1daf3f4313b9",
+                "name": "restore-me"
+            },
+            "createdAt": 1737003462977,
+            "updatedAt": 1737003462977
+        },
+        {
+            "_id": "67888fb5bd58bcbd493851cc",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 50,
+            "goal": 0,
+            "measurementDate": 1737002880000,
+            "lastmodifiedDate": 1737002880000,
+            "source": {
+                "id": "3cf01af7-ae2d-477c-a07b-ccf744983b7c",
+                "name": "restore-me"
+            },
+            "createdAt": 1737002933537,
+            "updatedAt": 1737002933537
+        },
+        {
+            "_id": "677c225ec1d5c07b73d4e4dd",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 999,
+            "goal": 0,
+            "measurementDate": 1736188505000,
+            "lastmodifiedDate": 1736188505000,
+            "source": {
+                "id": "0f1b5dbf-9464-4cb8-85f3-252e5970ded4",
+                "name": "restore-me"
+            },
+            "createdAt": 1736188510358,
+            "updatedAt": 1736188510358
+        },
+        {
+            "_id": "67a4356a003e6c1f47db8026",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 500,
+            "goal": 0,
+            "measurementDate": 1736136416000,
+            "lastmodifiedDate": 1736136416000,
+            "source": {
+                "id": "96c47620-823d-413b-920d-e918c0adb9c6",
+                "name": "restore-me"
+            },
+            "createdAt": 1738814826886,
+            "updatedAt": 1738814826886
+        },
+        {
+            "_id": "677b9de9e689e2509001254d",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6723041b7ee984705f6bfbe2-garmin-connect-2025-01-06",
+                "name": "garmin-connect"
+            },
+            "goal": 1000,
+            "lastmodifiedDate": 1736121600000,
+            "measurementDate": 1736121600000,
+            "type": "stepcount",
+            "value": 1861
+        },
+        {
+            "_id": "677b9de9e689e2509001254a",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6723041b7ee984705f6bfbe2-garmin-connect-2025-01-05",
+                "name": "garmin-connect"
+            },
+            "goal": 1010,
+            "lastmodifiedDate": 1736035200000,
+            "measurementDate": 1736035200000,
+            "type": "stepcount",
+            "value": 319
+        },
+        {
+            "_id": "677b9de9e689e25090012549",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6723041b7ee984705f6bfbe2-garmin-connect-2025-01-04",
+                "name": "garmin-connect"
+            },
+            "goal": 1010,
+            "lastmodifiedDate": 1735948800000,
+            "measurementDate": 1735948800000,
+            "type": "stepcount",
+            "value": 0
+        },
+        {
+            "_id": "6777ae47d8659d1a413fff2f",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 50,
+            "goal": 0,
+            "measurementDate": 1735896640000,
+            "lastmodifiedDate": 1735896640000,
+            "source": {
+                "id": "8010a9c1-ff53-4a26-ae33-12ff186db1c8",
+                "name": "restore-me"
+            },
+            "createdAt": 1735896647090,
+            "updatedAt": 1735896647090
+        },
+        {
+            "_id": "6777ae33d8659d7d8f3fff2e",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 5,
+            "goal": 0,
+            "measurementDate": 1735896619000,
+            "lastmodifiedDate": 1735896619000,
+            "source": {
+                "id": "f9daa6ae-8b4d-433f-b3c5-b70357153eaf",
+                "name": "restore-me"
+            },
+            "createdAt": 1735896627523,
+            "updatedAt": 1735896627523
+        },
+        {
+            "_id": "6777acf0d8659d52363fff2d",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 10,
+            "goal": 0,
+            "measurementDate": 1735896295000,
+            "lastmodifiedDate": 1735896295000,
+            "source": {
+                "id": "776a7be4-e69c-493a-8f52-0b52d4cf6349",
+                "name": "restore-me"
+            },
+            "createdAt": 1735896304599,
+            "updatedAt": 1735896304599
+        },
+        {
+            "_id": "6777a4b2d8659dcdb73fff2c",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 5,
+            "goal": 0,
+            "measurementDate": 1735894185000,
+            "lastmodifiedDate": 1735894185000,
+            "source": {
+                "id": "74ee1d3b-17e5-4440-b407-8101c19937b8",
+                "name": "restore-me"
+            },
+            "createdAt": 1735894194605,
+            "updatedAt": 1735894194605
+        },
+        {
+            "_id": "677b9de9e689e2509001254c",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6723041b7ee984705f6bfbe2-garmin-connect-2025-01-03",
+                "name": "garmin-connect"
+            },
+            "goal": 1010,
+            "lastmodifiedDate": 1735862400000,
+            "measurementDate": 1735862400000,
+            "type": "stepcount",
+            "value": 0
+        },
+        {
+            "_id": "677682c772d5f211f61bf183",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 77,
+            "goal": 0,
+            "measurementDate": 1735819970000,
+            "lastmodifiedDate": 1735819970000,
+            "source": {
+                "id": "ea06e76c-151e-4a88-854f-587fff0bb2cd",
+                "name": "restore-me"
+            },
+            "createdAt": 1735819975034,
+            "updatedAt": 1735819975034
+        },
+        {
+            "_id": "677b9de9e689e25090012548",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6723041b7ee984705f6bfbe2-garmin-connect-2025-01-02",
+                "name": "garmin-connect"
+            },
+            "goal": 1010,
+            "lastmodifiedDate": 1735776000000,
+            "measurementDate": 1735776000000,
+            "type": "stepcount",
+            "value": 0
+        },
+        {
+            "_id": "677b9de9e689e2509001254b",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6723041b7ee984705f6bfbe2-garmin-connect-2024-12-31",
+                "name": "garmin-connect"
+            },
+            "goal": 1010,
+            "lastmodifiedDate": 1735603200000,
+            "measurementDate": 1735603200000,
+            "type": "stepcount",
+            "value": 0
+        },
+        {
+            "_id": "677b9de9e689e25090012547",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6723041b7ee984705f6bfbe2-garmin-connect-2024-12-30",
+                "name": "garmin-connect"
+            },
+            "goal": 1010,
+            "lastmodifiedDate": 1735516800000,
+            "measurementDate": 1735516800000,
+            "type": "stepcount",
+            "value": 0
+        },
+        {
+            "_id": "677b9de9e689e2509001254e",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6723041b7ee984705f6bfbe2-garmin-connect-2024-12-29",
+                "name": "garmin-connect"
+            },
+            "goal": 1000,
+            "lastmodifiedDate": 1735430400000,
+            "measurementDate": 1735430400000,
+            "type": "stepcount",
+            "value": 1018
+        },
+        {
+            "_id": "676efde0ba998f89cbc55010",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6723041b7ee984705f6bfbe2-garmin-connect-2024-12-28",
+                "name": "garmin-connect"
+            },
+            "goal": 1000,
+            "lastmodifiedDate": 1735344000000,
+            "measurementDate": 1735344000000,
+            "type": "stepcount",
+            "value": 60
+        },
+        {
+            "_id": "676db818ba998f89cbc2a69e",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6723041b7ee984705f6bfbe2-garmin-connect-2024-12-27",
+                "name": "garmin-connect"
+            },
+            "goal": 1000,
+            "lastmodifiedDate": 1735257600000,
+            "measurementDate": 1735257600000,
+            "type": "stepcount",
+            "value": 738
+        },
+        {
+            "_id": "676ce2d021f4276cd9ea4da8",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6723041b7ee984705f6bfbe2-garmin-connect-2024-12-26",
+                "name": "garmin-connect"
+            },
+            "goal": 1000,
+            "lastmodifiedDate": 1735171200000,
+            "measurementDate": 1735171200000,
+            "type": "stepcount",
+            "value": 846
+        },
+        {
+            "_id": "676b915021f4276cd9e78cf1",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6723041b7ee984705f6bfbe2-garmin-connect-2024-12-25",
+                "name": "garmin-connect"
+            },
+            "goal": 1000,
+            "lastmodifiedDate": 1735084800000,
+            "measurementDate": 1735084800000,
+            "type": "stepcount",
+            "value": 995
+        },
+        {
+            "_id": "676ab8cace088951ddcfe68b",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 80,
+            "goal": 0,
+            "measurementDate": 1735047365000,
+            "lastmodifiedDate": 1735047365000,
+            "source": {
+                "id": "1df3be0f-658c-47c6-af17-9cb31c25391d",
+                "name": "restore-me"
+            },
+            "createdAt": 1735047370359,
+            "updatedAt": 1735047370359
+        },
+        {
+            "_id": "676a81701f47c35fb42ad022",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6723041b7ee984705f6bfbe2-garmin-connect-2024-12-24",
+                "name": "garmin-connect"
+            },
+            "goal": 1000,
+            "lastmodifiedDate": 1734998400000,
+            "measurementDate": 1734998400000,
+            "type": "stepcount",
+            "value": 819
+        },
+        {
+            "_id": "676979927e8b557770343a56",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 39,
+            "goal": 0,
+            "measurementDate": 1734965640000,
+            "lastmodifiedDate": 1734965640000,
+            "source": {
+                "id": "0aa7112d-7003-493d-bde3-6e3f1bfe8a91",
+                "name": "restore-me"
+            },
+            "createdAt": 1734965650528,
+            "updatedAt": 1734965650528
+        },
+        {
+            "_id": "676979c37e8b55adee343a57",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 500,
+            "goal": 0,
+            "measurementDate": 1734965640000,
+            "lastmodifiedDate": 1734965640000,
+            "source": {
+                "id": "b7719dd9-2c0b-40aa-9758-4fc81f8fde24",
+                "name": "restore-me"
+            },
+            "createdAt": 1734965699583,
+            "updatedAt": 1734965699583
+        },
+        {
+            "_id": "676979747e8b553364343a55",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "stepcount",
+            "value": 66,
+            "goal": 0,
+            "measurementDate": 1734965580000,
+            "lastmodifiedDate": 1734965580000,
+            "source": {
+                "id": "ba018798-ead1-47d9-af02-1880e9c2762d",
+                "name": "restore-me"
+            },
+            "createdAt": 1734965620162,
+            "updatedAt": 1734965620162
+        },
+        {
+            "_id": "67697164a01919facd5d71bc",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6723041b7ee984705f6bfbe2-garmin-connect-2024-12-22",
+                "name": "garmin-connect"
+            },
+            "goal": 1000,
+            "lastmodifiedDate": 1734825600000,
+            "measurementDate": 1734825600000,
+            "type": "stepcount",
+            "value": 480
+        }
+    ],
+    "benchMarks": {
+        "lowBorderline": {
+            "min": 250,
+            "max": 400
+        },
+        "normal": {
+            "min": 400,
+            "max": 700
+        },
+        "highBorderline": {
+            "min": 700,
+            "max": 800
+        }
+    }
+}
+
 // Example usage:
 generatePDF(
     { name: "Milyn CC", age: 45 },
@@ -4382,6 +7301,8 @@ generatePDF(
     nutritionData,
     hydrateData,
     weightData,
+    activityData,
+    stepData,
     120
 );
 
