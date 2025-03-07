@@ -651,6 +651,67 @@ async function generateHydrationStackedChart(hydrateData, timeframeDays) {
     return chartJSNodeCanvas.renderToBuffer(configuration);
 }
 
+/**
+ * Generates a line chart of weight in lbs (converted from kg).
+ * The logs have `createdAt` as the timestamp, `value` in kg.
+ */
+async function generateWeightChart(weightData, timeframeDays) {
+    // 1) Filter & sort logs by date
+    const filteredLogs = filterNutritionLogsByTimeframe(weightData.logs, timeframeDays)
+        .sort((a, b) => a.createdAt - b.createdAt);
+
+    // 2) Convert each log’s kg value to lbs
+    const chartData = filteredLogs.map(d => ({
+        x: d.createdAt,                // numeric timestamp
+        y: d.value * 2.20462           // kg -> lbs
+    }));
+
+    // 3) Color all points red (since no valid benchmark ranges)
+    const colors = filteredLogs.map(() => "#FA114F");
+
+    // 4) Build Chart.js configuration
+    const configuration = {
+        type: "line",
+        data: {
+            datasets: [
+                {
+                    label: "Weight (lbs)",
+                    data: chartData,
+                    borderColor: "#636363",
+                    backgroundColor: "rgba(0,0,0,0)",
+                    pointBackgroundColor: colors,
+                    pointBorderColor: colors,
+                    borderDash: [10, 10],  // dotted line
+                    spanGaps: true
+                }
+            ]
+        },
+        options: {
+            scales: {
+                x: {
+                    type: "time",
+                    time: {
+                        tooltipFormat: "DD MMM YYYY",
+                        displayFormats: {
+                            day: "DD MMM"
+                        }
+                    },
+                    title: { display: true, text: "Date" }
+                },
+                y: {
+                    title: { display: true, text: "Pounds (lbs)" }
+                }
+            },
+            plugins: {
+                legend: { position: "bottom" }
+            }
+        }
+    };
+
+    // 5) Render chart to buffer
+    return chartJSNodeCanvas.renderToBuffer(configuration);
+}
+
 
 async function generatePDF(
     patientInfo,
@@ -660,6 +721,7 @@ async function generatePDF(
     bloodGlucoseData,
     nutritionData,
     hydrateData,
+    weightData,
     timeframeDays
 ) {
     try {
@@ -943,6 +1005,48 @@ async function generatePDF(
             }).moveDown(3);
         }
 
+        doc.moveDown(100);
+
+        if (weightData) {
+            doc.addPage(); // optional if you want a new page for weight
+
+            doc.fontSize(16)
+                .text(`Weight (Last ${timeframeDays} days)`, { align: "center" })
+                .moveDown();
+
+            // Current weight in lbs
+            const currentWeightLbs = weightData.currentWeight
+                ? (weightData.currentWeight * 2.20462).toFixed(2)
+                : "-";
+
+            // Find the lowest weight from logs
+            const allValues = weightData.logs.map(log => log.value);
+            const lowestLog = allValues.length
+                ? weightData.logs.reduce((min, log) => (log.value < min.value ? log : min))
+                : null;
+            const lowestWeightKg = lowestLog ? lowestLog.value : "-";
+            const lowestWeightDate = lowestLog
+                ? moment(lowestLog.createdAt).tz(TIMEZONE).format("DD MMM YYYY")
+                : "-";
+            const lowestWeightLbs = lowestLog
+                ? (lowestWeightKg * 2.20462).toFixed(2)
+                : "-";
+
+            doc.fontSize(12)
+                .text(`Current Weight: ${currentWeightLbs} lbs`, { align: "left" })
+                .moveDown(0.5)
+                .text(`Lowest Weight: ${lowestWeightLbs} lbs on ${lowestWeightDate}`, { align: "left" })
+                .moveDown(1.5);
+
+            // Generate & embed the weight chart
+            const weightChartImage = await generateWeightChart(weightData, timeframeDays);
+            doc.image(weightChartImage, {
+                width: 550,
+                align: "center",
+                valign: "center",
+                x: (doc.page.width - 550) / 2
+            }).moveDown(3);
+        }
 
         // End & save PDF
         doc.end();
@@ -3119,6 +3223,1155 @@ const hydrateData = {
     "benchMarks": null
 }
 
+const weightData = {
+    "goalAverage": 0,
+    "currentWeight": 116,
+    "logs": [
+        {
+            "source": null,
+            "_id": "67c69ad2e1280b8f2b716202",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 116,
+            "goal": 0,
+            "createdAt": 1741069010064,
+            "updatedAt": 1741069010064
+        },
+        {
+            "source": null,
+            "_id": "67c68f3be1280bdceb7161fc",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 116.12,
+            "goal": 0,
+            "createdAt": 1741066043792,
+            "updatedAt": 1741066043792
+        },
+        {
+            "source": null,
+            "_id": "67c68f3be1280b40807161f9",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 116,
+            "goal": 0,
+            "createdAt": 1741066043427,
+            "updatedAt": 1741066043427
+        },
+        {
+            "source": {
+                "name": "apple-hk",
+                "id": "6723041b7ee984705f6bfbe2B951402C-9C24-46EC-A374-914B017111AB"
+            },
+            "_id": "67c7bf8915590866b5c021b8",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "createdAt": 1740631680000,
+            "goal": 0,
+            "lastmodifiedDate": 1740631680000,
+            "measurementDate": 1740631680000,
+            "type": "weight",
+            "value": 302.09251842000003
+        },
+        {
+            "source": null,
+            "_id": "67bf12575562fad6faa1097f",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 116.17,
+            "goal": 0,
+            "createdAt": 1740575319781,
+            "updatedAt": 1740575319781
+        },
+        {
+            "source": null,
+            "_id": "67bef52d6306f7dcf38c5d52",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 116.1451247165533,
+            "goal": 0,
+            "createdAt": 1740567853451,
+            "updatedAt": 1740567853451
+        },
+        {
+            "source": null,
+            "_id": "67bd56969ce34f25f693adfd",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 112.94,
+            "goal": 0,
+            "createdAt": 1740461718956,
+            "updatedAt": 1740461718956
+        },
+        {
+            "source": null,
+            "_id": "67bbf574fbbb529f3523ad2a",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 113.4,
+            "goal": 0,
+            "createdAt": 1740371316511,
+            "updatedAt": 1740371316511
+        },
+        {
+            "source": null,
+            "_id": "67bbf433fbbb52c05d23ad21",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 100,
+            "goal": 0,
+            "createdAt": 1740370995782,
+            "updatedAt": 1740370995782
+        },
+        {
+            "source": null,
+            "_id": "67bbf18dfbbb523ff823ad1b",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 56.7,
+            "goal": 0,
+            "createdAt": 1740370317451,
+            "updatedAt": 1740370317451
+        },
+        {
+            "source": null,
+            "_id": "67bbf14bfbbb524a7923ad15",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 45,
+            "goal": 0,
+            "createdAt": 1740370251452,
+            "updatedAt": 1740370251452
+        },
+        {
+            "source": null,
+            "_id": "67b8961efbbb52808923ad12",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 170,
+            "goal": 0,
+            "createdAt": 1740150302270,
+            "updatedAt": 1740150302270
+        },
+        {
+            "source": null,
+            "_id": "67b88d84fbbb5294d623ad0f",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 167,
+            "goal": 0,
+            "createdAt": 1740148100849,
+            "updatedAt": 1740148100849
+        },
+        {
+            "source": null,
+            "_id": "67b88c67fbbb52329923ad09",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 500,
+            "goal": 0,
+            "createdAt": 1740147815222,
+            "updatedAt": 1740147815222
+        },
+        {
+            "source": null,
+            "_id": "67b8196bfbbb52cfc223acfe",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 90,
+            "goal": 0,
+            "createdAt": 1740118379581,
+            "updatedAt": 1740118379581
+        },
+        {
+            "source": null,
+            "_id": "67b8191bfbbb529c4523acf9",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 88,
+            "goal": 0,
+            "createdAt": 1740118299163,
+            "updatedAt": 1740118299163
+        },
+        {
+            "source": null,
+            "_id": "67b8089ffbbb52a88223acf2",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 86,
+            "goal": 0,
+            "createdAt": 1740114079733,
+            "updatedAt": 1740114079733
+        },
+        {
+            "source": null,
+            "_id": "67b80842fbbb524e4923aced",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 87,
+            "goal": 0,
+            "createdAt": 1740113986766,
+            "updatedAt": 1740113986766
+        },
+        {
+            "source": null,
+            "_id": "67b807b9fbbb522b6f23acea",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 181,
+            "goal": 0,
+            "createdAt": 1740113849329,
+            "updatedAt": 1740113849329
+        },
+        {
+            "source": null,
+            "_id": "67b806e6fbbb52749d23ace7",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 126,
+            "goal": 0,
+            "createdAt": 1740113638022,
+            "updatedAt": 1740113638022
+        },
+        {
+            "source": null,
+            "_id": "67b80625fbbb52bc9923ace4",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 87,
+            "goal": 0,
+            "createdAt": 1740113445675,
+            "updatedAt": 1740113445675
+        },
+        {
+            "source": null,
+            "_id": "67b8060ffbbb52daf823ace0",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 89,
+            "goal": 0,
+            "createdAt": 1740113423398,
+            "updatedAt": 1740113423398
+        },
+        {
+            "source": {
+                "id": "6723041b7ee984705f6bfbe214af11a7-bc9d-49ec-ace2-2b054b95b66e",
+                "name": "google-hc"
+            },
+            "_id": "67bf070db4a0e54776557b54",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "createdAt": 1739945700000,
+            "goal": 0,
+            "lastmodifiedDate": 1739945751582,
+            "measurementDate": 1739945700000,
+            "type": "weight",
+            "value": 73
+        },
+        {
+            "source": null,
+            "_id": "67aeefbc401febd5aa5f1511",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 90,
+            "goal": 0,
+            "createdAt": 1739517884071,
+            "updatedAt": 1739517884071
+        },
+        {
+            "source": null,
+            "_id": "67aec85d401febef285f1505",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 101,
+            "goal": 0,
+            "createdAt": 1739507805111,
+            "updatedAt": 1739507805111
+        },
+        {
+            "source": null,
+            "_id": "67ac5d4f56ebd54c8b208e28",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 100.68,
+            "goal": 0,
+            "createdAt": 1739349327107,
+            "updatedAt": 1739349327107
+        },
+        {
+            "source": null,
+            "_id": "67ac56f331d90d236ed4097a",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 100,
+            "goal": 0,
+            "createdAt": 1739347699979,
+            "updatedAt": 1739347699979
+        },
+        {
+            "source": null,
+            "_id": "67ac425331d90d2339d40976",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 100.68,
+            "goal": 0,
+            "createdAt": 1739342419131,
+            "updatedAt": 1739342419131
+        },
+        {
+            "source": null,
+            "_id": "67a9d07031d90d2204d40955",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 100.68027210884354,
+            "goal": 0,
+            "createdAt": 1739182192459,
+            "updatedAt": 1739182192459
+        },
+        {
+            "source": null,
+            "_id": "67a9d04e31d90d53ded40952",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 22,
+            "goal": 0,
+            "createdAt": 1739182158569,
+            "updatedAt": 1739182158569
+        },
+        {
+            "source": null,
+            "_id": "6799e17528579408278c1ef8",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 200,
+            "goal": 0,
+            "createdAt": 1738137973777,
+            "updatedAt": 1738137973777
+        },
+        {
+            "source": null,
+            "_id": "6799cab02857945df08c1ea5",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 100,
+            "goal": 0,
+            "createdAt": 1738132144449,
+            "updatedAt": 1738132144449
+        },
+        {
+            "source": null,
+            "_id": "6799bfc82857942a988c1e9c",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 373,
+            "goal": 0,
+            "createdAt": 1738129352280,
+            "updatedAt": 1738129352280
+        },
+        {
+            "source": null,
+            "_id": "6799bf44285794a3618c1e9a",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 6.802721088435374,
+            "goal": 0,
+            "createdAt": 1738129220457,
+            "updatedAt": 1738129220457
+        },
+        {
+            "source": null,
+            "_id": "6799bf23285794b11c8c1e95",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 9.070294784580499,
+            "goal": 0,
+            "createdAt": 1738129187395,
+            "updatedAt": 1738129187395
+        },
+        {
+            "source": null,
+            "_id": "6799beb828579446d28c1e91",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 126,
+            "goal": 0,
+            "createdAt": 1738129080904,
+            "updatedAt": 1738129080904
+        },
+        {
+            "source": null,
+            "_id": "6799bbe1285794c8968c1e8d",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 634.9206349206349,
+            "goal": 0,
+            "createdAt": 1738128353752,
+            "updatedAt": 1738128353752
+        },
+        {
+            "source": null,
+            "_id": "6799b892285794e6aa8c1e89",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 9.070294784580499,
+            "goal": 0,
+            "createdAt": 1738127506876,
+            "updatedAt": 1738127506876
+        },
+        {
+            "source": null,
+            "_id": "6799a738285794b5e88c1e59",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 69,
+            "goal": 0,
+            "createdAt": 1738123064834,
+            "updatedAt": 1738123064834
+        },
+        {
+            "source": null,
+            "_id": "6799a6ff28579405b58c1e57",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 50,
+            "goal": 0,
+            "createdAt": 1738123007645,
+            "updatedAt": 1738123007645
+        },
+        {
+            "source": null,
+            "_id": "6799a6e02857941c8d8c1e54",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 98,
+            "goal": 0,
+            "createdAt": 1738122976378,
+            "updatedAt": 1738122976378
+        },
+        {
+            "source": null,
+            "_id": "6799a2f92857943d828c1e4c",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 73,
+            "goal": 0,
+            "createdAt": 1738121977453,
+            "updatedAt": 1738121977453
+        },
+        {
+            "source": null,
+            "_id": "67999e4b285794929b8c1e49",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 97,
+            "goal": 0,
+            "createdAt": 1738120779071,
+            "updatedAt": 1738120779071
+        },
+        {
+            "source": null,
+            "_id": "67999dbe2857941f938c1e46",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 69,
+            "goal": 0,
+            "createdAt": 1738120638128,
+            "updatedAt": 1738120638128
+        },
+        {
+            "source": null,
+            "_id": "6798816274fe5d6c2fca13f1",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 100,
+            "goal": 0,
+            "createdAt": 1738047842307,
+            "updatedAt": 1738047842307
+        },
+        {
+            "source": null,
+            "_id": "6798816174fe5d5f7eca13ee",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 100,
+            "goal": 0,
+            "createdAt": 1738047841895,
+            "updatedAt": 1738047841895
+        },
+        {
+            "source": null,
+            "_id": "6798615d74fe5d4176ca13b9",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 91.17,
+            "goal": 0,
+            "createdAt": 1738039645207,
+            "updatedAt": 1738039645207
+        },
+        {
+            "source": null,
+            "_id": "67985f7274fe5d137bca13b6",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 90.70294784580499,
+            "goal": 0,
+            "createdAt": 1738039154102,
+            "updatedAt": 1738039154102
+        },
+        {
+            "source": null,
+            "_id": "678a0d0b111bcebd6e50ebd5",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 70,
+            "goal": 0,
+            "createdAt": 1737100555989,
+            "updatedAt": 1737100555989
+        },
+        {
+            "source": null,
+            "_id": "678a0cbb111bcee77550ebd3",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 70,
+            "goal": 0,
+            "createdAt": 1737100475111,
+            "updatedAt": 1737100475111
+        },
+        {
+            "source": null,
+            "_id": "678a0678111bcefe5750ebd2",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 400,
+            "goal": 0,
+            "createdAt": 1737098872975,
+            "updatedAt": 1737098872975
+        },
+        {
+            "source": null,
+            "_id": "678a0678111bce2ace50ebcf",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 400,
+            "goal": 0,
+            "createdAt": 1737098872586,
+            "updatedAt": 1737098872586
+        },
+        {
+            "source": null,
+            "_id": "6787bd52bd58bcd6813851b3",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 453,
+            "goal": 0,
+            "createdAt": 1736949074616,
+            "updatedAt": 1736949074616
+        },
+        {
+            "source": null,
+            "_id": "67829548f100d56cd075e0b0",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 453,
+            "goal": 0,
+            "createdAt": 1736611144377,
+            "updatedAt": 1736611144377
+        },
+        {
+            "source": null,
+            "_id": "67829538f100d562dd75e0ae",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 453,
+            "goal": 0,
+            "createdAt": 1736611128426,
+            "updatedAt": 1736611128426
+        },
+        {
+            "source": null,
+            "_id": "6782184b8bcd15bf818e80eb",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 453.01,
+            "goal": 0,
+            "createdAt": 1736579147262,
+            "updatedAt": 1736579147262
+        },
+        {
+            "source": null,
+            "_id": "678108478bcd15ce5d8e80e0",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 453,
+            "goal": 0,
+            "createdAt": 1736509511181,
+            "updatedAt": 1736509511181
+        },
+        {
+            "source": null,
+            "_id": "6780d1344e36fa38b18c3b8b",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 453.14,
+            "goal": 0,
+            "createdAt": 1736495412854,
+            "updatedAt": 1736495412854
+        },
+        {
+            "source": null,
+            "_id": "677f9af3ad141ada9f292371",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 1102,
+            "goal": 0,
+            "createdAt": 1736415987713,
+            "updatedAt": 1736415987713
+        },
+        {
+            "source": null,
+            "_id": "677ece2cb2bc3b77d4aa94dd",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 1102,
+            "goal": 0,
+            "createdAt": 1736363564290,
+            "updatedAt": 1736363564290
+        },
+        {
+            "source": null,
+            "_id": "677d4c4d672728d24042d55f",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 750,
+            "goal": 0,
+            "createdAt": 1736264781665,
+            "updatedAt": 1736264781665
+        },
+        {
+            "source": null,
+            "_id": "677d3a37672728b56242d55b",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 340,
+            "goal": 0,
+            "createdAt": 1736260151526,
+            "updatedAt": 1736260151526
+        },
+        {
+            "source": null,
+            "_id": "677d315c672728582642d558",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 154,
+            "goal": 0,
+            "createdAt": 1736257884659,
+            "updatedAt": 1736257884659
+        },
+        {
+            "source": null,
+            "_id": "677d0b15672728457742d54d",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 70,
+            "goal": 0,
+            "createdAt": 1736248085443,
+            "updatedAt": 1736248085443
+        },
+        {
+            "source": null,
+            "_id": "677d0a81672728800242d54b",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 70,
+            "goal": 0,
+            "createdAt": 1736247937995,
+            "updatedAt": 1736247937995
+        },
+        {
+            "source": null,
+            "_id": "677cbd12c1d5c00e33d4e4e4",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 70,
+            "goal": 0,
+            "createdAt": 1736228114897,
+            "updatedAt": 1736228114897
+        },
+        {
+            "source": null,
+            "_id": "677c30c3c1d5c04e4fd4e4df",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 100.68027210884354,
+            "goal": 0,
+            "createdAt": 1736192195506,
+            "updatedAt": 1736192195506
+        },
+        {
+            "source": null,
+            "_id": "677a48e0f13e236be39580ed",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 1102,
+            "goal": 0,
+            "createdAt": 1736067296463,
+            "updatedAt": 1736067296463
+        },
+        {
+            "source": null,
+            "_id": "67782a03f13e234bda9580e6",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 500,
+            "goal": 0,
+            "createdAt": 1735928323062,
+            "updatedAt": 1735928323062
+        },
+        {
+            "source": null,
+            "_id": "6778138fb2537462f28f5ab7",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 1102,
+            "goal": 0,
+            "createdAt": 1735922575742,
+            "updatedAt": 1735922575742
+        },
+        {
+            "source": null,
+            "_id": "6777dc3239d63d2d157091b5",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 1102,
+            "goal": 0,
+            "createdAt": 1735908402803,
+            "updatedAt": 1735908402803
+        },
+        {
+            "source": null,
+            "_id": "6777d0990f96460f1269aa80",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 536,
+            "goal": 0,
+            "createdAt": 1735905433804,
+            "updatedAt": 1735905433804
+        },
+        {
+            "source": null,
+            "_id": "6777c1fd20fbe339ca34d15c",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 243,
+            "goal": 0,
+            "createdAt": 1735901693555,
+            "updatedAt": 1735901693555
+        },
+        {
+            "source": null,
+            "_id": "6777b4cbd8659d6c7a3fff3b",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 110,
+            "goal": 0,
+            "createdAt": 1735898315682,
+            "updatedAt": 1735898315682
+        },
+        {
+            "source": null,
+            "_id": "6777b4b0d8659d4ca73fff37",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 5,
+            "goal": 0,
+            "createdAt": 1735898288694,
+            "updatedAt": 1735898288694
+        },
+        {
+            "source": null,
+            "_id": "6777b46ed8659d4e283fff34",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 110,
+            "goal": 0,
+            "createdAt": 1735898222266,
+            "updatedAt": 1735898222266
+        },
+        {
+            "source": null,
+            "_id": "6777b120d8659dfaa63fff32",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 243,
+            "goal": 0,
+            "createdAt": 1735897376421,
+            "updatedAt": 1735897376421
+        },
+        {
+            "source": null,
+            "_id": "67779208d8659d4f6f3fff28",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 110,
+            "goal": 0,
+            "createdAt": 1735889416420,
+            "updatedAt": 1735889416420
+        },
+        {
+            "source": null,
+            "_id": "67766e9219d5120e35c65881",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 50,
+            "goal": 0,
+            "createdAt": 1735814802666,
+            "updatedAt": 1735814802666
+        },
+        {
+            "source": null,
+            "_id": "67766d5a19d512009fc6587e",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 5,
+            "goal": 0,
+            "createdAt": 1735814490608,
+            "updatedAt": 1735814490608
+        },
+        {
+            "source": null,
+            "_id": "6776638d19d5120c93c65864",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 0,
+            "goal": 0,
+            "createdAt": 1735811981295,
+            "updatedAt": 1735811981295
+        },
+        {
+            "source": null,
+            "_id": "6776638c19d5124227c65860",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 217,
+            "goal": 0,
+            "createdAt": 1735811980961,
+            "updatedAt": 1735811980961
+        },
+        {
+            "source": null,
+            "_id": "6776633e19d5123219c6585d",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 186,
+            "goal": 0,
+            "createdAt": 1735811902532,
+            "updatedAt": 1735811902532
+        },
+        {
+            "source": null,
+            "_id": "6776630919d5120cf5c65859",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 409,
+            "goal": 0,
+            "createdAt": 1735811849908,
+            "updatedAt": 1735811849908
+        },
+        {
+            "source": null,
+            "_id": "6776630919d512c42bc65856",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 186,
+            "goal": 0,
+            "createdAt": 1735811849539,
+            "updatedAt": 1735811849539
+        },
+        {
+            "source": null,
+            "_id": "677662ef19d51222dcc65852",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 409,
+            "goal": 0,
+            "createdAt": 1735811823880,
+            "updatedAt": 1735811823880
+        },
+        {
+            "source": null,
+            "_id": "677662ef19d51271bdc65850",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 186,
+            "goal": 0,
+            "createdAt": 1735811823423,
+            "updatedAt": 1735811823423
+        },
+        {
+            "source": null,
+            "_id": "67765eada3ab4681c8566ca6",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 400,
+            "goal": 0,
+            "createdAt": 1735810733407,
+            "updatedAt": 1735810733407
+        },
+        {
+            "source": null,
+            "_id": "67765e86935bff6fbc6302c9",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 500,
+            "goal": 0,
+            "createdAt": 1735810694118,
+            "updatedAt": 1735810694118
+        },
+        {
+            "source": null,
+            "_id": "67765e76935bff6fbc6302c8",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 50,
+            "goal": 0,
+            "createdAt": 1735810678639,
+            "updatedAt": 1735810678639
+        },
+        {
+            "source": null,
+            "_id": "67765e2f61116969e8c69bb4",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 50,
+            "goal": 0,
+            "createdAt": 1735810607026,
+            "updatedAt": 1735810607026
+        },
+        {
+            "source": null,
+            "_id": "67761a2c02fe569244e91a8e",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 1102,
+            "goal": 0,
+            "createdAt": 1735793196315,
+            "updatedAt": 1735793196315
+        },
+        {
+            "source": null,
+            "_id": "677589f702fe568c9fe91a89",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 500,
+            "goal": 0,
+            "createdAt": 1735756279466,
+            "updatedAt": 1735756279466
+        },
+        {
+            "source": null,
+            "_id": "67756b59d39fc1e714550041",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 431,
+            "goal": 0,
+            "createdAt": 1735748441045,
+            "updatedAt": 1735748441045
+        },
+        {
+            "source": null,
+            "_id": "67756b0fd39fc1b6e655003d",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 408,
+            "goal": 0,
+            "createdAt": 1735748367727,
+            "updatedAt": 1735748367727
+        },
+        {
+            "source": null,
+            "_id": "67754231d39fc190de55003a",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 220,
+            "goal": 0,
+            "createdAt": 1735737905386,
+            "updatedAt": 1735737905386
+        },
+        {
+            "source": null,
+            "_id": "67b806b1c82c960e9c0cdff8",
+            "goal": 0,
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "updatedAt": 1740113585166,
+            "value": 453.0612244897959,
+            "createdAt": 1734756772000
+        },
+        {
+            "source": null,
+            "_id": "67613ea0024130225fe213b7",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 100,
+            "goal": 0,
+            "createdAt": 1734426272065,
+            "updatedAt": 1734426272065
+        },
+        {
+            "source": null,
+            "_id": "675d4146e692df185cd0cb3f",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 109,
+            "goal": 0,
+            "createdAt": 1734164806316,
+            "updatedAt": 1734164806316
+        },
+        {
+            "source": null,
+            "_id": "675d412ce692df185cd0cb3c",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 100,
+            "goal": 0,
+            "createdAt": 1734164780934,
+            "updatedAt": 1734164780934
+        },
+        {
+            "source": null,
+            "_id": "675d3eebe692df185cd0cb38",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 99,
+            "goal": 0,
+            "createdAt": 1734164203363,
+            "updatedAt": 1734164203363
+        },
+        {
+            "source": null,
+            "_id": "675d3d725f14072e9c76fd79",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 86,
+            "goal": 0,
+            "createdAt": 1734163826675,
+            "updatedAt": 1734163826675
+        },
+        {
+            "source": null,
+            "_id": "675d3c1a3fbc8c70e83ec5a2",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 78,
+            "goal": 0,
+            "createdAt": 1734163482114,
+            "updatedAt": 1734163482114
+        },
+        {
+            "source": null,
+            "_id": "675d3b7726ea447ce038d1b2",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 76,
+            "goal": 0,
+            "createdAt": 1734163319077,
+            "updatedAt": 1734163319077
+        },
+        {
+            "source": null,
+            "_id": "675d3aac26ea447ce038d1b0",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 70,
+            "goal": 0,
+            "createdAt": 1734163116001,
+            "updatedAt": 1734163116001
+        },
+        {
+            "source": null,
+            "_id": "675d3a8526ea447ce038d1af",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 55,
+            "goal": 0,
+            "createdAt": 1734163077496,
+            "updatedAt": 1734163077496
+        },
+        {
+            "source": null,
+            "_id": "675d3a6626ea447ce038d1ad",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 55,
+            "goal": 0,
+            "createdAt": 1734163046130,
+            "updatedAt": 1734163046130
+        },
+        {
+            "source": null,
+            "_id": "675d39fb26ea447ce038d1ac",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 50,
+            "goal": 0,
+            "createdAt": 1734162939574,
+            "updatedAt": 1734162939574
+        },
+        {
+            "source": null,
+            "_id": "675d39ed26ea447ce038d1ab",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 50,
+            "goal": 0,
+            "createdAt": 1734162925993,
+            "updatedAt": 1734162925993
+        },
+        {
+            "source": null,
+            "_id": "675d11449e721251d00a8784",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 49.99,
+            "goal": 0,
+            "createdAt": 1734152516034,
+            "updatedAt": 1734152516034
+        },
+        {
+            "source": null,
+            "_id": "675beb269e72127b610a8764",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 226.75736961451247,
+            "goal": 0,
+            "createdAt": 1734077222910,
+            "updatedAt": 1734077222910
+        },
+        {
+            "source": null,
+            "_id": "673ad76eaea9513d63ebeec8",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "type": "weight",
+            "value": 300,
+            "goal": 0,
+            "createdAt": 1731909486398,
+            "updatedAt": 1731909486398
+        }
+    ],
+    "benchMarks": {
+        "lowBorderline": {
+            "min": 0,
+            "max": 0
+        },
+        "normal": {
+            "min": 0,
+            "max": 0
+        },
+        "highBorderline": {
+            "min": 0,
+            "max": 0
+        }
+    }
+}
+
 // Example usage:
 generatePDF(
     { name: "Milyn CC", age: 45 },
@@ -3128,6 +4381,7 @@ generatePDF(
     bloodGlucoseData,
     nutritionData,
     hydrateData,
+    weightData,
     120
 );
 
