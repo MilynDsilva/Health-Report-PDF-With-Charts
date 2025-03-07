@@ -18,6 +18,13 @@ function filterDataByTimeframe(data, timeframeDays) {
     return data.filter(d => d.measurementDate >= startDate);
 }
 
+function filterNutritionLogsByTimeframe(logs, timeframeDays) {
+    const now = moment().tz(TIMEZONE).startOf("day").valueOf();
+    const startDate = now - (timeframeDays - 1) * 24 * 60 * 60 * 1000;
+    // Compare to `createdAt` instead of `measurementDate`
+    return logs.filter(d => d.createdAt >= startDate);
+}
+
 async function generateTemperatureChart(data, benchmark, timeframeDays) {
     // Filter & sort logs by date so the line connects in chronological order
     const filteredData = filterDataByTimeframe(data, timeframeDays)
@@ -305,11 +312,354 @@ async function generateBloodPressureChart(logs, benchMark, timeframeDays) {
     return chartJSNodeCanvas.renderToBuffer(configuration);
 }
 
+/**
+ * Generates a multi-line blood glucose chart with three categories:
+ *  - FASTING
+ *  - AFTER_A_MEAL
+ *  - RANDOM
+ *
+ * Each category gets its own line color/style, and each data point
+ * is color-coded (normal, borderline, outlier) based on the provided
+ * benchmark ranges.
+ */
+async function generateBloodGlucoseChart(logs, benchMark, timeframeDays) {
+    // 1) Filter & sort logs by date
+    const filteredData = filterDataByTimeframe(logs, timeframeDays)
+        .sort((a, b) => a.measurementDate - b.measurementDate);
+
+    // 2) Separate logs by category
+    const fastingLogs = filteredData.filter(d => d.category === "FASTING");
+    const afterMealLogs = filteredData.filter(d => d.category === "AFTER_A_MEAL");
+    const randomLogs = filteredData.filter(d => d.category === "RANDOM");
+
+    // Helper: classify a glucose value => color (normal/borderline/outlier)
+    // - FASTING => benchMark.beforeMeals
+    // - AFTER_A_MEAL or RANDOM => benchMark.afterMealsAndRandom
+    function classifyGlucose(value, category) {
+        const ranges = (category === "FASTING")
+            ? benchMark.beforeMeals
+            : benchMark.afterMealsAndRandom;
+
+        // Normal
+        if (value >= ranges.normal.min && value <= ranges.normal.max) {
+            return "#00B050"; // green
+        }
+
+        // Borderline if it’s in either lowBorderline or highBorderline
+        const inLowBorder = (
+            value >= ranges.lowBorderline.min && value <= ranges.lowBorderline.max
+        );
+        const inHighBorder = (
+            value >= ranges.highBorderline.min && value <= ranges.highBorderline.max
+        );
+        if (inLowBorder || inHighBorder) {
+            return "#FFA63E"; // orange borderline
+        }
+
+        // Otherwise, outlier
+        return "#FA114F"; // red outlier
+    }
+
+    // Convert logs => Chart.js data points + store a color for each point
+    function makeDatasetData(arr, category) {
+        return arr.map(d => ({
+            x: d.measurementDate,
+            y: d.value,
+            pointColor: classifyGlucose(d.value, category)
+        }));
+    }
+
+    // 3) Define style for each category (line color, dash, point shape, etc.)
+    const categoryStyles = {
+        FASTING: {
+            label: "Fasting",
+            lineColor: "#800080",    // purple
+            pointStyle: "circle",    // round points
+            borderDash: []
+        },
+        AFTER_A_MEAL: {
+            label: "After A Meal",
+            lineColor: "#FF1493",    // pink
+            pointStyle: "triangle",  // triangle points
+            borderDash: []
+        },
+        RANDOM: {
+            label: "Random",
+            lineColor: "#0000FF",    // blue
+            pointStyle: "rectRot",   // diamond
+            borderDash: [10, 10]     // dashed line for "random"
+        }
+    };
+
+    // Build an array of datasets—one per category that actually has data
+    function buildDataset(logArr, category) {
+        if (!logArr.length) return null;
+        const dataPoints = makeDatasetData(logArr, category);
+        const style = categoryStyles[category];
+        return {
+            label: style.label,
+            data: dataPoints,
+            borderColor: style.lineColor,
+            backgroundColor: "rgba(0,0,0,0)",
+            pointBackgroundColor: dataPoints.map(d => d.pointColor),
+            pointBorderColor: dataPoints.map(d => d.pointColor),
+            pointStyle: style.pointStyle,
+            borderDash: style.borderDash,
+            spanGaps: true
+        };
+    }
+
+    const datasets = [];
+    const fastingDataset = buildDataset(fastingLogs, "FASTING");
+    if (fastingDataset) datasets.push(fastingDataset);
+
+    const afterMealDataset = buildDataset(afterMealLogs, "AFTER_A_MEAL");
+    if (afterMealDataset) datasets.push(afterMealDataset);
+
+    const randomDataset = buildDataset(randomLogs, "RANDOM");
+    if (randomDataset) datasets.push(randomDataset);
+
+    // 4) Chart.js configuration
+    const configuration = {
+        type: "line",
+        data: { datasets },
+        options: {
+            scales: {
+                x: {
+                    type: "time",
+                    time: {
+                        tooltipFormat: "DD MMM YYYY, HH:mm",
+                        displayFormats: {
+                            hour: "DD MMM, HH:mm",
+                            day: "DD MMM"
+                        }
+                    },
+                    title: { display: true, text: "Date" }
+                },
+                y: {
+                    title: { display: true, text: "Blood Glucose mg/dL" }
+                }
+            },
+            plugins: {
+                legend: { position: "bottom" }
+            }
+        }
+    };
+
+    // 5) Render chart to image buffer
+    return chartJSNodeCanvas.renderToBuffer(configuration);
+}
+
+async function generateNutritionChart(nutritionData, timeframeDays) {
+    // 1) Filter & sort logs by date so the line is chronological
+    const filteredLogs = filterNutritionLogsByTimeframe(nutritionData.logs, timeframeDays)
+        .sort((a, b) => a.createdAt - b.createdAt);
+
+    // 2) Convert logs => Chart.js data points
+    //    We'll store the numeric timestamp in `x` and consumption in `y`.
+    const consumptionData = filteredLogs.map(log => ({
+        x: log.createdAt,
+        y: log.consumed
+    }));
+
+    // 3) Classify each consumption => color (Normal, Borderline, Outlier)
+    function classifyCalorie(value) {
+        const { lowBorderline, normal, highBorderline } = nutritionData.benchMarks;
+        // Outlier if < lowBorderline.min or > highBorderline.max
+        if (value < lowBorderline.min || value > highBorderline.max) return "#FA114F"; // red
+        // Borderline if in lowBorderline or highBorderline
+        const inLow = (value >= lowBorderline.min && value <= lowBorderline.max);
+        const inHigh = (value >= highBorderline.min && value <= highBorderline.max);
+        if (inLow || inHigh) return "#FFA63E"; // orange
+        // Otherwise, normal
+        return "#00B050"; // green
+    }
+
+    // Create a color array for each data point
+    const colors = filteredLogs.map(log => classifyCalorie(log.consumed));
+
+    // 4) We'll add a single horizontal line for the "currentGoal" (e.g. 2900)
+    let goalData = [];
+    if (consumptionData.length > 0) {
+        const earliest = consumptionData[0].x;
+        const latest = consumptionData[consumptionData.length - 1].x;
+        const goalY = nutritionData.currentGoal; // e.g. 2900
+        goalData = [
+            { x: earliest, y: goalY },
+            { x: latest, y: goalY }
+        ];
+    }
+
+    // 5) Build the Chart.js configuration
+    const configuration = {
+        type: "line",
+        data: {
+            datasets: [
+                {
+                    label: "Consumption",
+                    data: consumptionData,
+                    borderColor: "#636363",             // dotted grey line
+                    backgroundColor: "rgba(0,0,0,0)",
+                    borderDash: [10, 10],
+                    pointBackgroundColor: colors,
+                    pointBorderColor: colors,
+                    spanGaps: true
+                },
+                {
+                    label: `Goal (${nutritionData.currentGoal} ${nutritionData.unit})`,
+                    data: goalData,
+                    borderColor: "#0047FF",             // solid blue line
+                    pointRadius: 0,
+                    borderDash: []
+                }
+            ]
+        },
+        options: {
+            scales: {
+                x: {
+                    type: "time",
+                    time: {
+                        tooltipFormat: "DD MMM YYYY",
+                        displayFormats: {
+                            day: "DD MMM"
+                        }
+                    },
+                    title: { display: true, text: "Date" }
+                },
+                y: {
+                    title: { display: true, text: `Calorie (${nutritionData.unit})` }
+                }
+            },
+            plugins: {
+                legend: { position: "bottom" }
+            }
+        }
+    };
+
+    // 6) Render chart to buffer & return
+    return chartJSNodeCanvas.renderToBuffer(configuration);
+}
+
+/**
+ * Generates a bar chart for daily water intake.
+ * - Each bar is green if consumed <= goal, red if consumed > goal.
+ * - X-axis is time-based, using createdAt.
+ */
+/**
+ * Generates a stacked bar chart for water intake.
+ * For each day:
+ *   - If consumed < goal:
+ *       Green bar from 0..consumed
+ *       Blue bar from consumed..goal
+ *       Red bar = 0
+ *   - If consumed == goal:
+ *       Entire bar is green (no blue leftover, no red excess)
+ *   - If consumed > goal:
+ *       Green bar from 0..goal
+ *       Blue bar = 0
+ *       Red bar from goal..consumed
+ */
+async function generateHydrationStackedChart(hydrateData, timeframeDays) {
+    // 1) Filter & sort logs by date (using createdAt)
+    const filteredLogs = filterNutritionLogsByTimeframe(hydrateData.logs, timeframeDays)
+        .sort((a, b) => a.createdAt - b.createdAt);
+
+    // 2) Prepare 3 separate datasets for stacked bars:
+    //    - "Intake" (green)
+    //    - "Goal" (blue leftover)
+    //    - "Excess" (red above goal)
+    const dataIntake = [];
+    const dataGoal = [];
+    const dataExcess = [];
+
+    for (const log of filteredLogs) {
+        const dateX = log.createdAt;
+        const consumed = log.consumed;
+        const goal = log.goal;
+
+        if (consumed < goal) {
+            // Consumed is below goal
+            dataIntake.push({ x: dateX, y: consumed });      // green portion
+            dataGoal.push({ x: dateX, y: goal - consumed }); // leftover goal in blue
+            dataExcess.push({ x: dateX, y: 0 });             // no excess
+        } else {
+            // Consumed >= goal
+            dataIntake.push({ x: dateX, y: Math.min(goal, consumed) }); // green portion up to the goal
+            dataGoal.push({ x: dateX, y: 0 });                          // no leftover if consumed >= goal
+            dataExcess.push({ x: dateX, y: consumed - goal });          // red portion above the goal (0 if equal)
+        }
+    }
+
+    // 3) Build Chart.js config with 3 stacked bar datasets
+    const configuration = {
+        type: "bar",
+        data: {
+            datasets: [
+                {
+                    label: "Intake",
+                    data: dataIntake,
+                    backgroundColor: "#00B050" // green
+                },
+                {
+                    label: "Goal",
+                    data: dataGoal,
+                    backgroundColor: "#0047FF" // blue
+                },
+                {
+                    label: "Excess",
+                    data: dataExcess,
+                    backgroundColor: "#FA114F" // red
+                }
+            ]
+        },
+        options: {
+            scales: {
+                x: {
+                    type: "time",
+                    time: {
+                        tooltipFormat: "DD MMM YYYY",
+                        displayFormats: {
+                            day: "DD MMM"
+                        }
+                    },
+                    stacked: true, // Enable stacking on X axis
+                    title: { display: true, text: "Date" }
+                },
+                y: {
+                    stacked: true, // Enable stacking on Y axis
+                    title: { display: true, text: `Milliliter (${hydrateData.unit})` }
+                }
+            },
+            plugins: {
+                legend: { position: "bottom" },
+                tooltip: {
+                    callbacks: {
+                        // Show daily consumed & goal in tooltip
+                        label: (context) => {
+                            // context.raw is the { x, y } object from the dataset
+                            const datasetLabel = context.dataset.label || "";
+                            const val = context.parsed.y;
+                            return `${datasetLabel}: ${val} ${hydrateData.unit}`;
+                        }
+                    }
+                }
+            }
+        }
+    };
+
+    // 4) Render the chart to a buffer & return
+    return chartJSNodeCanvas.renderToBuffer(configuration);
+}
+
+
 async function generatePDF(
     patientInfo,
     temperatureData,
     heartRateData,
-    bloodPressureData, // <--- add new parameter
+    bloodPressureData,
+    bloodGlucoseData,
+    nutritionData,
+    hydrateData,
     timeframeDays
 ) {
     try {
@@ -475,6 +825,124 @@ async function generatePDF(
                 x: (doc.page.width - 550) / 2
             }).moveDown(3);
         }
+
+        doc.moveDown(100);
+
+        if (bloodGlucoseData) {
+            doc.addPage(); // optional: start a fresh page if desired
+
+            doc.fontSize(16)
+                .text(`Blood Glucose (Last ${timeframeDays} days)`, { align: "center" })
+                .moveDown();
+
+            // Prepare summary stats
+            const allBgValues = bloodGlucoseData.logs.map(log => log.value);
+            const currentBg = bloodGlucoseData.value || "-";
+            const currentCategory = bloodGlucoseData.category || "-";
+            const averageBg = allBgValues.length
+                ? (allBgValues.reduce((sum, v) => sum + v, 0) / allBgValues.length).toFixed(2)
+                : "-";
+
+            const lowestBgLog = allBgValues.length
+                ? bloodGlucoseData.logs.reduce((min, log) => (log.value < min.value ? log : min))
+                : null;
+            const lowestBg = lowestBgLog ? lowestBgLog.value : "-";
+            const lowestBgDate = lowestBgLog
+                ? moment(lowestBgLog.measurementDate).tz(TIMEZONE).format("DD MMM YYYY")
+                : "-";
+
+            doc.fontSize(12)
+                .text(`Current Glucose: ${currentBg} mg/dL (Category: ${currentCategory})`, { align: "left" })
+                .moveDown(0.5)
+                .text(`Average Glucose: ${averageBg} mg/dL`, { align: "left" })
+                .moveDown(0.5)
+                .text(`Lowest Glucose: ${lowestBg} mg/dL on ${lowestBgDate}`, { align: "left" })
+                .moveDown(1.5);
+
+            // Render the new Blood Glucose chart
+            const bloodGlucoseChartImage = await generateBloodGlucoseChart(
+                bloodGlucoseData.logs,
+                bloodGlucoseData.benchMark,
+                timeframeDays
+            );
+            doc.image(bloodGlucoseChartImage, {
+                width: 550,
+                align: "center",
+                valign: "center",
+                x: (doc.page.width - 550) / 2
+            }).moveDown(3);
+        }
+
+        doc.moveDown(100);
+
+        if (nutritionData) {
+            doc.addPage(); // optional new page if needed
+
+            doc.fontSize(16)
+                .text(`Nutrition (Last ${timeframeDays} days)`, { align: "center" })
+                .moveDown();
+
+            // We can show summary stats (goalAverage, actualAverage, etc.)
+            const goalAvg = nutritionData.goalAverage?.toFixed(2) || "-";
+            const actualAvg = nutritionData.actualAverage?.toFixed(2) || "-";
+
+            // Find lowest consumption
+            const allConsumed = nutritionData.logs.map(log => log.consumed);
+            const lowestLog = allConsumed.length
+                ? nutritionData.logs.reduce((min, log) => (log.consumed < min.consumed ? log : min))
+                : null;
+            const lowestConsumed = lowestLog ? lowestLog.consumed : "-";
+            const lowestConsumedDate = lowestLog
+                ? moment(lowestLog.createdAt).tz(TIMEZONE).format("DD MMM YYYY")
+                : "-";
+
+            doc.fontSize(12)
+                .text(`Goal Average: ${goalAvg} ${nutritionData.unit}`, { align: "left" })
+                .moveDown(0.5)
+                .text(`Actual Average: ${actualAvg} ${nutritionData.unit}`, { align: "left" })
+                .moveDown(0.5)
+                .text(`Lowest Consumption: ${lowestConsumed} ${nutritionData.unit} on ${lowestConsumedDate}`, { align: "left" })
+                .moveDown(1.5);
+
+            // Generate & embed the nutrition chart
+            const nutritionChartImage = await generateNutritionChart(nutritionData, timeframeDays);
+            doc.image(nutritionChartImage, {
+                width: 550,
+                align: "center",
+                valign: "center",
+                x: (doc.page.width - 550) / 2
+            }).moveDown(3);
+        }
+
+        doc.moveDown(100);
+
+        if (hydrateData) {
+            doc.addPage(); // optional if you want a fresh page
+
+            doc.fontSize(16)
+                .text(`Water Intake (Last ${timeframeDays} days)`, { align: "center" })
+                .moveDown();
+
+            // Summaries
+            const goalAvg = hydrateData.goalAverage?.toFixed(2) || "-";
+            const actualAvg = hydrateData.actualAverage?.toFixed(2) || "-";
+
+            doc.fontSize(12)
+                .text(`Goal Average: ${goalAvg} ${hydrateData.unit}`, { align: "left" })
+                .moveDown(0.5)
+                .text(`Actual Average: ${actualAvg} ${hydrateData.unit}`, { align: "left" })
+                .moveDown(1);
+
+            // Render stacked bar chart
+            const hydrationStackedChart = await generateHydrationStackedChart(hydrateData, timeframeDays);
+            doc.image(hydrationStackedChart, {
+                width: 550,
+                align: "center",
+                valign: "center",
+                x: (doc.page.width - 550) / 2
+            }).moveDown(3);
+        }
+
 
         // End & save PDF
         doc.end();
@@ -1650,12 +2118,1016 @@ const bloodPressureData = {
     ]
 }
 
+const bloodGlucoseData = {
+    "type": "bloodglucose",
+    "value": 900,
+    "category": "RANDOM",
+    "benchMark": {
+        "beforeMeals": {
+            "outlier": {
+                "min": 0,
+                "max": 69
+            },
+            "lowBorderline": {
+                "min": 70,
+                "max": 89
+            },
+            "normal": {
+                "min": 90,
+                "max": 99
+            },
+            "highBorderline": {
+                "min": 100,
+                "max": 125
+            },
+            "high": {
+                "min": 126,
+                "max": 1000
+            }
+        },
+        "afterMealsAndRandom": {
+            "outlier": {
+                "min": 0,
+                "max": 69
+            },
+            "lowBorderline": {
+                "min": 70,
+                "max": 100
+            },
+            "normal": {
+                "min": 101,
+                "max": 140
+            },
+            "highBorderline": {
+                "min": 141,
+                "max": 199
+            },
+            "high": {
+                "min": 200,
+                "max": 1000
+            }
+        }
+    },
+    "logs": [
+        {
+            "_id": "675fab29d3f53f0529d05f69",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "f7370eb1-e694-48c7-953a-4b6204df9776",
+                "name": "restore-me"
+            },
+            "type": "bloodglucose",
+            "measurementDate": 1734322980000,
+            "lastmodifiedDate": 1734322980000,
+            "value": 666,
+            "category": "RANDOM",
+            "createdAt": 1734322985256,
+            "updatedAt": 1734322985256
+        },
+        {
+            "_id": "67685081e0ac8d82842ca72e",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "4f649ce3-32ec-4031-8ec2-922c236da35a",
+                "name": "restore-me"
+            },
+            "type": "bloodglucose",
+            "measurementDate": 1734889560000,
+            "lastmodifiedDate": 1734889560000,
+            "value": 67,
+            "category": "FASTING",
+            "createdAt": 1734889601619,
+            "updatedAt": 1734889601619
+        },
+        {
+            "_id": "6769a3757e8b55fa6a343a5b",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "1e15fb0e-f63d-4ad5-811f-3cda6e9056f5",
+                "name": "restore-me"
+            },
+            "type": "bloodglucose",
+            "measurementDate": 1734976320000,
+            "lastmodifiedDate": 1734976320000,
+            "value": 663,
+            "category": "RANDOM",
+            "createdAt": 1734976373749,
+            "updatedAt": 1734976373749
+        },
+        {
+            "_id": "677aae96c1d5c00745d4e48e",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "1df155f6-5c3d-410b-821a-7fbfb8e1a195",
+                "name": "restore-me"
+            },
+            "type": "bloodglucose",
+            "measurementDate": 1736093280000,
+            "lastmodifiedDate": 1736093280000,
+            "value": 66,
+            "category": "FASTING",
+            "createdAt": 1736093334433,
+            "updatedAt": 1736093334433
+        },
+        {
+            "_id": "677c16d4c1d5c036afd4e4da",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "eaec24b1-189c-45da-b2b3-e73715b0706c",
+                "name": "restore-me"
+            },
+            "type": "bloodglucose",
+            "measurementDate": 1736185500000,
+            "lastmodifiedDate": 1736185500000,
+            "value": 32,
+            "category": "RANDOM",
+            "createdAt": 1736185556244,
+            "updatedAt": 1736185556244
+        },
+        {
+            "_id": "677d0cf46727284ec242d54e",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "a83628e0-f631-4e7e-85f8-eb50a619178b",
+                "name": "restore-me"
+            },
+            "type": "bloodglucose",
+            "measurementDate": 1736248560000,
+            "lastmodifiedDate": 1736248560000,
+            "value": 66,
+            "category": "RANDOM",
+            "createdAt": 1736248564883,
+            "updatedAt": 1736248564883
+        },
+        {
+            "_id": "6793781b1a744dc82fe4bee0",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6961386c-7c99-4f28-b4ff-5b62dcfcd5cc",
+                "name": "restore-me"
+            },
+            "type": "bloodglucose",
+            "measurementDate": 1737544980000,
+            "lastmodifiedDate": 1737544980000,
+            "value": 58,
+            "category": "RANDOM",
+            "createdAt": 1737717787789,
+            "updatedAt": 1737717787789
+        },
+        {
+            "_id": "67937c801a744d0fc2e4beeb",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "5fc758e9-a3a2-48a0-b7ec-9cf66be9d0a0",
+                "name": "restore-me"
+            },
+            "type": "bloodglucose",
+            "measurementDate": 1737632460000,
+            "lastmodifiedDate": 1737632460000,
+            "value": 120,
+            "category": "AFTER_A_MEAL",
+            "createdAt": 1737718912156,
+            "updatedAt": 1737718912156
+        },
+        {
+            "_id": "679378031a744d4042e4bede",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "4555fd6c-8105-4442-899f-519fbcc2252c",
+                "name": "restore-me"
+            },
+            "type": "bloodglucose",
+            "measurementDate": 1737717720000,
+            "lastmodifiedDate": 1737717720000,
+            "value": 222,
+            "category": "RANDOM",
+            "createdAt": 1737717763737,
+            "updatedAt": 1737717763737
+        },
+        {
+            "_id": "6793780c1a744d4a97e4bedf",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "a2c7dc95-bc12-40b8-8e11-ee55cca1c3c0",
+                "name": "restore-me"
+            },
+            "type": "bloodglucose",
+            "measurementDate": 1737717720000,
+            "lastmodifiedDate": 1737717720000,
+            "value": 333,
+            "category": "RANDOM",
+            "createdAt": 1737717772220,
+            "updatedAt": 1737717772220
+        },
+        {
+            "_id": "6793792c1a744dcea9e4bee1",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "4fd63683-5f5d-46f5-9b5c-6cc52e3e1ea0",
+                "name": "restore-me"
+            },
+            "type": "bloodglucose",
+            "measurementDate": 1737718020000,
+            "lastmodifiedDate": 1737718020000,
+            "value": 100,
+            "category": "FASTING",
+            "createdAt": 1737718060910,
+            "updatedAt": 1737718060910
+        },
+        {
+            "_id": "6793793a1a744da328e4bee2",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "18f82ae5-bfbd-4123-8c48-74bb4db5e0b0",
+                "name": "restore-me"
+            },
+            "type": "bloodglucose",
+            "measurementDate": 1737718020000,
+            "lastmodifiedDate": 1737718020000,
+            "value": 150,
+            "category": "FASTING",
+            "createdAt": 1737718074654,
+            "updatedAt": 1737718074654
+        },
+        {
+            "_id": "679379461a744d174de4bee3",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "c013b884-5933-4e4e-9468-b91403102cce",
+                "name": "restore-me"
+            },
+            "type": "bloodglucose",
+            "measurementDate": 1737718080000,
+            "lastmodifiedDate": 1737718080000,
+            "value": 100,
+            "category": "FASTING",
+            "createdAt": 1737718086337,
+            "updatedAt": 1737718086337
+        },
+        {
+            "_id": "679379511a744d3620e4bee4",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "d63f4ee4-9050-4876-8d24-701ba1e0204a",
+                "name": "restore-me"
+            },
+            "type": "bloodglucose",
+            "measurementDate": 1737718080000,
+            "lastmodifiedDate": 1737718080000,
+            "value": 80,
+            "category": "FASTING",
+            "createdAt": 1737718097554,
+            "updatedAt": 1737718097554
+        },
+        {
+            "_id": "6793797d1a744d8feee4bee5",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "614b7835-6fd4-4872-a662-a0c8ed1485a0",
+                "name": "restore-me"
+            },
+            "type": "bloodglucose",
+            "measurementDate": 1737718080000,
+            "lastmodifiedDate": 1737718080000,
+            "value": 100,
+            "category": "AFTER_A_MEAL",
+            "createdAt": 1737718141112,
+            "updatedAt": 1737718141112
+        },
+        {
+            "_id": "67937c701a744d4255e4beea",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "e508341a-4f10-4631-a98f-37de63ffa727",
+                "name": "restore-me"
+            },
+            "type": "bloodglucose",
+            "measurementDate": 1737718860000,
+            "lastmodifiedDate": 1737718860000,
+            "value": 100,
+            "category": "AFTER_A_MEAL",
+            "createdAt": 1737718896778,
+            "updatedAt": 1737718896778
+        },
+        {
+            "_id": "67a5e3f531d90d2c61d408d6",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "7dcc3136-9efa-41d5-8d61-2fa2182fda91",
+                "name": "restore-me"
+            },
+            "type": "bloodglucose",
+            "measurementDate": 1738925040000,
+            "lastmodifiedDate": 1738925040000,
+            "value": 10,
+            "category": "RANDOM",
+            "createdAt": 1738925045975,
+            "updatedAt": 1738925045975
+        },
+        {
+            "_id": "67a5e3fe31d90da5c9d408d7",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "ed3efec6-8cf0-45cb-a390-f4fcc866340b",
+                "name": "restore-me"
+            },
+            "type": "bloodglucose",
+            "measurementDate": 1738925040000,
+            "lastmodifiedDate": 1738925040000,
+            "value": 100,
+            "category": "RANDOM",
+            "createdAt": 1738925054362,
+            "updatedAt": 1738925054362
+        },
+        {
+            "_id": "67a5e40931d90d673dd408d8",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "a85b6330-2578-4825-83d0-61dbaf1793c9",
+                "name": "restore-me"
+            },
+            "type": "bloodglucose",
+            "measurementDate": 1738925040000,
+            "lastmodifiedDate": 1738925040000,
+            "value": 140,
+            "category": "RANDOM",
+            "createdAt": 1738925065526,
+            "updatedAt": 1738925065526
+        },
+        {
+            "_id": "67a5e41831d90d1247d408d9",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "d5a01ca9-ed6d-4f7d-87d4-a6d966fbcb13",
+                "name": "restore-me"
+            },
+            "type": "bloodglucose",
+            "measurementDate": 1738925040000,
+            "lastmodifiedDate": 1738925040000,
+            "value": 150,
+            "category": "RANDOM",
+            "createdAt": 1738925080077,
+            "updatedAt": 1738925080077
+        },
+        {
+            "_id": "67a5e42b31d90d211ed408da",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "e3178909-6ab6-4947-af7f-b87d8ca2ddf6",
+                "name": "restore-me"
+            },
+            "type": "bloodglucose",
+            "measurementDate": 1738925040000,
+            "lastmodifiedDate": 1738925040000,
+            "value": 40,
+            "category": "RANDOM",
+            "createdAt": 1738925099513,
+            "updatedAt": 1738925099513
+        },
+        {
+            "_id": "67a5e43131d90d4f14d408db",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "ba285232-5bbb-4327-a947-db37111f4aa6",
+                "name": "restore-me"
+            },
+            "type": "bloodglucose",
+            "measurementDate": 1738925100000,
+            "lastmodifiedDate": 1738925100000,
+            "value": 50,
+            "category": "RANDOM",
+            "createdAt": 1738925105358,
+            "updatedAt": 1738925105358
+        },
+        {
+            "_id": "67a5e43931d90d6b87d408dc",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6a760728-7580-4bce-a961-403644fd5865",
+                "name": "restore-me"
+            },
+            "type": "bloodglucose",
+            "measurementDate": 1738925100000,
+            "lastmodifiedDate": 1738925100000,
+            "value": 60,
+            "category": "RANDOM",
+            "createdAt": 1738925113395,
+            "updatedAt": 1738925113395
+        },
+        {
+            "_id": "67a5e45431d90d7f52d408dd",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "b24c0116-23eb-4bb2-bb80-04e3043561de",
+                "name": "restore-me"
+            },
+            "type": "bloodglucose",
+            "measurementDate": 1738925100000,
+            "lastmodifiedDate": 1738925100000,
+            "value": 60,
+            "category": "RANDOM",
+            "createdAt": 1738925140652,
+            "updatedAt": 1738925140652
+        },
+        {
+            "_id": "67a5e45a31d90d2d72d408de",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "da840efc-9cae-4d8f-a25d-e06c8cf89062",
+                "name": "restore-me"
+            },
+            "type": "bloodglucose",
+            "measurementDate": 1738925100000,
+            "lastmodifiedDate": 1738925100000,
+            "value": 70,
+            "category": "RANDOM",
+            "createdAt": 1738925146398,
+            "updatedAt": 1738925146398
+        },
+        {
+            "_id": "67a5e46331d90dcbb4d408df",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6aadb2f8-b13c-4a9b-bb73-4c21ea4a1a44",
+                "name": "restore-me"
+            },
+            "type": "bloodglucose",
+            "measurementDate": 1738925100000,
+            "lastmodifiedDate": 1738925100000,
+            "value": 99,
+            "category": "RANDOM",
+            "createdAt": 1738925155755,
+            "updatedAt": 1738925155755
+        },
+        {
+            "_id": "67a5e46a31d90db05dd408e0",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "fd6bda2b-322d-427e-be35-974a210894bf",
+                "name": "restore-me"
+            },
+            "type": "bloodglucose",
+            "measurementDate": 1738925160000,
+            "lastmodifiedDate": 1738925160000,
+            "value": 100,
+            "category": "RANDOM",
+            "createdAt": 1738925162449,
+            "updatedAt": 1738925162449
+        },
+        {
+            "_id": "67a5e47031d90dc8aed408e1",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "38d75be7-4eb0-4dfd-b0ad-5c510e07e61c",
+                "name": "restore-me"
+            },
+            "type": "bloodglucose",
+            "measurementDate": 1738925160000,
+            "lastmodifiedDate": 1738925160000,
+            "value": 110,
+            "category": "RANDOM",
+            "createdAt": 1738925168601,
+            "updatedAt": 1738925168601
+        },
+        {
+            "_id": "67a5e47631d90d2148d408e2",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "4125a02c-b9df-4aa5-8194-dccbe65934cf",
+                "name": "restore-me"
+            },
+            "type": "bloodglucose",
+            "measurementDate": 1738925160000,
+            "lastmodifiedDate": 1738925160000,
+            "value": 109,
+            "category": "RANDOM",
+            "createdAt": 1738925174657,
+            "updatedAt": 1738925174657
+        },
+        {
+            "_id": "67a9cf8c31d90d0099d40951",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "7f7ba4d9-4aef-40a1-9042-45f7f391c52c",
+                "name": "restore-me"
+            },
+            "type": "bloodglucose",
+            "measurementDate": 1739181960000,
+            "lastmodifiedDate": 1739181960000,
+            "value": 0,
+            "category": "RANDOM",
+            "createdAt": 1739181964967,
+            "updatedAt": 1739181964967
+        },
+        {
+            "_id": "67a9d08431d90d46b4d40959",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "d9fd6ccd-b362-43de-a023-064f802464f8",
+                "name": "restore-me"
+            },
+            "type": "bloodglucose",
+            "measurementDate": 1739182200000,
+            "lastmodifiedDate": 1739182200000,
+            "value": 22,
+            "category": "RANDOM",
+            "createdAt": 1739182212601,
+            "updatedAt": 1739182212601
+        },
+        {
+            "_id": "67ad8095401feb1a965f14f9",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "c55dcb17-a164-42cc-ac29-ebfdc75c8044",
+                "name": "restore-me"
+            },
+            "type": "bloodglucose",
+            "measurementDate": 1739423880000,
+            "lastmodifiedDate": 1739423880000,
+            "value": 226,
+            "category": "FASTING",
+            "createdAt": 1739423893270,
+            "updatedAt": 1739423893270
+        },
+        {
+            "_id": "67aed038401feb9c645f1508",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "5c6200b2-3056-408f-bd7b-2fb82d2a8075",
+                "name": "restore-me"
+            },
+            "type": "bloodglucose",
+            "measurementDate": 1739509800000,
+            "lastmodifiedDate": 1739509800000,
+            "value": 111,
+            "category": "AFTER_A_MEAL",
+            "createdAt": 1739509816877,
+            "updatedAt": 1739509816877
+        },
+        {
+            "_id": "67b30f17401feb3ee05f1671",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "765a2047-09ad-49a2-a879-b75c02a884d7",
+                "name": "restore-me"
+            },
+            "type": "bloodglucose",
+            "measurementDate": 1739788020000,
+            "lastmodifiedDate": 1739788020000,
+            "value": 100,
+            "category": "FASTING",
+            "createdAt": 1739788055720,
+            "updatedAt": 1739788055720
+        },
+        {
+            "_id": "67b55a0dfbf9421c279ea568",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "909fa078-9d73-4633-922d-7ffdc46516b0",
+                "name": "restore-me"
+            },
+            "type": "bloodglucose",
+            "measurementDate": 1739938260000,
+            "lastmodifiedDate": 1739938260000,
+            "value": 150,
+            "category": "AFTER_A_MEAL",
+            "createdAt": 1739938317879,
+            "updatedAt": 1739938317879
+        },
+        {
+            "_id": "67b55ea6fbf94259559ea56e",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "e1e0e1c5-be8a-4d9c-92d7-ec37bd3b6583",
+                "name": "restore-me"
+            },
+            "type": "bloodglucose",
+            "measurementDate": 1739939460000,
+            "lastmodifiedDate": 1739939460000,
+            "value": 222,
+            "category": "RANDOM",
+            "createdAt": 1739939494859,
+            "updatedAt": 1739939494859
+        },
+        {
+            "_id": "67b56177fbf942087b9ea573",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "355cbdb7-b429-4b26-a70f-a18f51d9f341",
+                "name": "restore-me"
+            },
+            "type": "bloodglucose",
+            "measurementDate": 1739940180000,
+            "lastmodifiedDate": 1739940180000,
+            "value": 229,
+            "category": "AFTER_A_MEAL",
+            "createdAt": 1739940215776,
+            "updatedAt": 1739940215776
+        },
+        {
+            "_id": "67b5618bfbf94212e69ea574",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "8ffb041f-8ad2-4331-9ab6-169fe18694d5",
+                "name": "restore-me"
+            },
+            "type": "bloodglucose",
+            "measurementDate": 1739940180000,
+            "lastmodifiedDate": 1739940180000,
+            "value": 112,
+            "category": "FASTING",
+            "createdAt": 1739940235520,
+            "updatedAt": 1739940235520
+        },
+        {
+            "_id": "67b561aafbf942d0659ea575",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "a0bd5a8a-dd61-45c4-8ae3-cff6328f0531",
+                "name": "restore-me"
+            },
+            "type": "bloodglucose",
+            "measurementDate": 1739940240000,
+            "lastmodifiedDate": 1739940240000,
+            "value": 100,
+            "category": "FASTING",
+            "createdAt": 1739940266387,
+            "updatedAt": 1739940266387
+        },
+        {
+            "_id": "67b588e236040ac59f99497f",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "name": "apple-hk",
+                "id": "6723041b7ee984705f6bfbe21162B7E0-577E-4EA6-AD3D-BF05E31BE6D3"
+            },
+            "category": "FASTING",
+            "createdAt": 1739950260000,
+            "lastmodifiedDate": 1739950260000,
+            "measurementDate": 1739950260000,
+            "type": "bloodglucose",
+            "value": 100
+        },
+        {
+            "_id": "67b597f936040ac59f9982e4",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "name": "apple-hk",
+                "id": "6723041b7ee984705f6bfbe2DF5257A2-A66B-4083-8901-2A9AA429B5D9"
+            },
+            "category": "AFTER_A_MEAL",
+            "createdAt": 1739954040000,
+            "lastmodifiedDate": 1739954040000,
+            "measurementDate": 1739954040000,
+            "type": "bloodglucose",
+            "value": 64
+        },
+        {
+            "_id": "67b597f936040ac59f9982e3",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6723041b7ee984705f6bfbe28A67C7EF-0992-48BB-81A7-AF9878541FB0",
+                "name": "apple-hk"
+            },
+            "category": "AFTER_A_MEAL",
+            "createdAt": 1739954100000,
+            "lastmodifiedDate": 1739954100000,
+            "measurementDate": 1739954100000,
+            "type": "bloodglucose",
+            "value": 22
+        },
+        {
+            "_id": "67bf070db4a0e54776557b63",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6723041b7ee984705f6bfbe2a7815e75-ba68-4351-b2f6-dc0d3516cd68",
+                "name": "google-hc"
+            },
+            "category": "RANDOM",
+            "createdAt": 1739955360000,
+            "lastmodifiedDate": 1739955376197,
+            "measurementDate": 1739955360000,
+            "type": "bloodglucose",
+            "value": 810
+        },
+        {
+            "_id": "67c9a49f15590866b5d0c3bb",
+            "medicalProfileId": "6723041b7ee984705f6bfbe2",
+            "source": {
+                "id": "6723041b7ee984705f6bfbe294ea0490-ead6-4ae1-b090-0b765496ab67",
+                "name": "google-hc"
+            },
+            "category": "RANDOM",
+            "createdAt": 1741267860000,
+            "lastmodifiedDate": 1741267888213,
+            "measurementDate": 1741267860000,
+            "type": "bloodglucose",
+            "value": 900
+        }
+    ]
+}
+
+const nutritionData = {
+    "goalAverage": 2900,
+    "actualAverage": 944.3695652173915,
+    "unit": "kcal",
+    "logs": [
+        {
+            "createdAt": 1741305600000,
+            "consumed": 485.3,
+            "goal": 2900
+        },
+        {
+            "createdAt": 1741219200000,
+            "consumed": 10.4,
+            "goal": 2900
+        },
+        {
+            "createdAt": 1741132800000,
+            "consumed": 9.4,
+            "goal": 2900
+        },
+        {
+            "createdAt": 1740614400000,
+            "consumed": 519,
+            "goal": 3485.1
+        },
+        {
+            "createdAt": 1740528000000,
+            "consumed": 4.2,
+            "goal": 3485.1
+        },
+        {
+            "createdAt": 1740441600000,
+            "consumed": 31,
+            "goal": 3485.1
+        },
+        {
+            "createdAt": 1739491200000,
+            "consumed": 3114,
+            "goal": 2517
+        },
+        {
+            "createdAt": 1739145600000,
+            "consumed": 135,
+            "goal": 2517.0068027210887
+        },
+        {
+            "createdAt": 1738800000000,
+            "consumed": 519,
+            "goal": 5000
+        },
+        {
+            "createdAt": 1738022400000,
+            "consumed": 14040,
+            "goal": 2279.25
+        },
+        {
+            "createdAt": 1737936000000,
+            "consumed": 98.4,
+            "goal": 2100.35
+        },
+        {
+            "createdAt": 1737504000000,
+            "consumed": 111.4,
+            "goal": 5175
+        },
+        {
+            "createdAt": 1736985600000,
+            "consumed": 661,
+            "goal": 11325
+        },
+        {
+            "createdAt": 1736726400000,
+            "consumed": 9,
+            "goal": 11325
+        },
+        {
+            "createdAt": 1736208000000,
+            "consumed": 200,
+            "goal": 1750
+        },
+        {
+            "createdAt": 1734912000000,
+            "consumed": 4.2,
+            "goal": 2500
+        },
+        {
+            "createdAt": 1734825600000,
+            "consumed": 488,
+            "goal": 2500
+        },
+        {
+            "createdAt": 1734739200000,
+            "consumed": 4,
+            "goal": 2500
+        },
+        {
+            "createdAt": 1734480000000,
+            "consumed": 4,
+            "goal": 2500
+        },
+        {
+            "createdAt": 1734307200000,
+            "consumed": 4.2,
+            "goal": 2725
+        },
+        {
+            "createdAt": 1734220800000,
+            "consumed": 400,
+            "goal": 2725
+        },
+        {
+            "createdAt": 1734134400000,
+            "consumed": 661,
+            "goal": 2725
+        },
+        {
+            "createdAt": 1733875200000,
+            "consumed": 208,
+            "goal": 17500
+        }
+    ],
+    "benchMarks": {
+        "lowBorderline": {
+            "min": 1740,
+            "max": 2320
+        },
+        "normal": {
+            "min": 2320,
+            "max": 3480
+        },
+        "highBorderline": {
+            "min": 3480,
+            "max": 4059.9999999999995
+        }
+    },
+    "currentGoal": 2900
+}
+
+const hydrateData = {
+    "goalAverage": 10000,
+    "actualAverage": 2025.8620689655172,
+    "unit": "ml",
+    "logs": [
+        {
+            "createdAt": 1741219200000,
+            "consumed": 1750,
+            "goal": 10000
+        },
+        {
+            "createdAt": 1741132800000,
+            "consumed": 250,
+            "goal": 10000
+        },
+        {
+            "createdAt": 1740960000000,
+            "consumed": 500,
+            "goal": 10000
+        },
+        {
+            "createdAt": 1740873600000,
+            "consumed": 750,
+            "goal": 10000
+        },
+        {
+            "createdAt": 1740009600000,
+            "consumed": 500,
+            "goal": 10000
+        },
+        {
+            "createdAt": 1739923200000,
+            "consumed": 2250,
+            "goal": 100000
+        },
+        {
+            "createdAt": 1739404800000,
+            "consumed": 250,
+            "goal": 100000
+        },
+        {
+            "createdAt": 1739145600000,
+            "consumed": 250,
+            "goal": 100000
+        },
+        {
+            "createdAt": 1738886400000,
+            "consumed": 5000,
+            "goal": 100000
+        },
+        {
+            "createdAt": 1738800000000,
+            "consumed": 6000,
+            "goal": 100000
+        },
+        {
+            "createdAt": 1738713600000,
+            "consumed": 12000,
+            "goal": 100000
+        },
+        {
+            "createdAt": 1738368000000,
+            "consumed": 250,
+            "goal": 100000
+        },
+        {
+            "createdAt": 1738022400000,
+            "consumed": 14250,
+            "goal": 0
+        },
+        {
+            "createdAt": 1737504000000,
+            "consumed": 250,
+            "goal": 6700
+        },
+        {
+            "createdAt": 1737417600000,
+            "consumed": 750,
+            "goal": 6700
+        },
+        {
+            "createdAt": 1737331200000,
+            "consumed": 2500,
+            "goal": 2300
+        },
+        {
+            "createdAt": 1737072000000,
+            "consumed": 1750,
+            "goal": 2300
+        },
+        {
+            "createdAt": 1736208000000,
+            "consumed": 750,
+            "goal": 0
+        },
+        {
+            "createdAt": 1736035200000,
+            "consumed": 250,
+            "goal": 0
+        },
+        {
+            "createdAt": 1734912000000,
+            "consumed": 250,
+            "goal": 0
+        },
+        {
+            "createdAt": 1734825600000,
+            "consumed": 500,
+            "goal": 0
+        },
+        {
+            "createdAt": 1734739200000,
+            "consumed": 1000,
+            "goal": 0
+        },
+        {
+            "createdAt": 1734480000000,
+            "consumed": 500,
+            "goal": 0
+        },
+        {
+            "createdAt": 1734307200000,
+            "consumed": 750,
+            "goal": 0
+        },
+        {
+            "createdAt": 1734220800000,
+            "consumed": 500,
+            "goal": 0
+        },
+        {
+            "createdAt": 1734134400000,
+            "consumed": 1000,
+            "goal": 0
+        },
+        {
+            "createdAt": 1733184000000,
+            "consumed": 3250,
+            "goal": 0
+        },
+        {
+            "createdAt": 1731974400000,
+            "consumed": 500,
+            "goal": 8300
+        },
+        {
+            "createdAt": 1731801600000,
+            "consumed": 250,
+            "goal": 8300
+        }
+    ],
+    "benchMarks": null
+}
+
 // Example usage:
 generatePDF(
     { name: "Milyn CC", age: 45 },
     temperatureData,
     heartRateData,
     bloodPressureData,
+    bloodGlucoseData,
+    nutritionData,
+    hydrateData,
     120
 );
 
