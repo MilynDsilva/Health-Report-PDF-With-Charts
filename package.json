@@ -1,0 +1,25 @@
+{
+  "name": "restoremernd",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "chart.js": "^3.9.1",
+    "chartjs-adapter-date-fns": "^3.0.0",
+    "chartjs-adapter-moment": "^1.0.1",
+    "chartjs-node-canvas": "^4.1.6",
+    "date-fns": "^4.1.0",
+    "fs": "^0.0.1-security",
+    "jspdf": "^3.0.0",
+    "moment-timezone": "^0.5.47",
+    "path": "^0.12.7",
+    "pdfkit": "^0.16.0"
+  }
+}
