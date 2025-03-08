@@ -1311,13 +1311,13 @@ async function generatePDF(
             doc.fontSize(16)
                 .text(`Medication (Last ${timeframeDays} days)`, { align: "center" })
                 .moveDown();
-            const goalAvg = medicationData.goalAverage?.toFixed(2) || "-";
-            const actualAvg = medicationData.actualAverage?.toFixed(2) || "-";
-            doc.fontSize(12)
-                .text(`Goal Average: ${goalAvg} ${medicationData.unit}`, { align: "left" })
-                .moveDown(0.5)
-                .text(`Actual Average: ${actualAvg} ${medicationData.unit}`, { align: "left" })
-                .moveDown(1);
+            // const goalAvg = medicationData.goalAverage?.toFixed(2) || "-";
+            // const actualAvg = medicationData.actualAverage?.toFixed(2) || "-";
+            // doc.fontSize(12)
+            //     .text(`Goal Average: ${goalAvg} ${medicationData.unit}`, { align: "left" })
+            //     .moveDown(0.5)
+            //     .text(`Actual Average: ${actualAvg} ${medicationData.unit}`, { align: "left" })
+            //     .moveDown(1);
             const medicationChart = await generateMedicationStackedChart(medicationData, timeframeDays);
             doc.image(medicationChart, {
                 width: 550,
