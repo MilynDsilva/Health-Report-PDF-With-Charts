@@ -21,14 +21,12 @@ function filterDataByTimeframe(data, timeframeDays) {
 function filterNutritionLogsByTimeframe(logs, timeframeDays) {
     const now = moment().tz(TIMEZONE).startOf("day").valueOf();
     const startDate = now - (timeframeDays - 1) * 24 * 60 * 60 * 1000;
-    // Compare to `createdAt` instead of `measurementDate`
     return logs.filter(d => d.createdAt >= startDate);
 }
 
 function filterMedicationDataByTimeframe(data, timeframeDays, dateField = "createdAt") {
     const now = moment().tz(TIMEZONE).startOf("day").valueOf();
     const startDate = now - (timeframeDays - 1) * 24 * 60 * 60 * 1000;
-
     return data.filter(d => {
         const dateValue = d[dateField];
         return dateValue >= startDate;
@@ -36,30 +34,24 @@ function filterMedicationDataByTimeframe(data, timeframeDays, dateField = "creat
 }
 
 async function generateTemperatureChart(data, benchmark, timeframeDays) {
-    // Filter & sort logs by date so the line connects in chronological order
     const filteredData = filterDataByTimeframe(data, timeframeDays)
         .sort((a, b) => a.measurementDate - b.measurementDate);
 
-    // Convert each log entry into a { x, y } point for Chart.js time scale
     const chartData = filteredData.map(d => ({
-        x: d.measurementDate, // numeric timestamp
+        x: d.measurementDate,
         y: d.value
     }));
 
-    // Create a color array, one per data point
     const colors = filteredData.map(d => {
         const value = d.value;
         if (value == null) return "#C0C0C0";
         const { min, max } = benchmark.normalRange;
         if (value >= min && value <= max) return "#0047FF"; // normal
-        if ((value >= min - 1 && value < min) || (value > max && value <= max + 1)) {
+        if ((value >= min - 1 && value < min) || (value > max && value <= max + 1))
             return "#FFA63E"; // borderline
-        }
         return "#FA114F"; // outlier
     });
 
-    // For the dashed "normal temperature" line, we just plot two points:
-    // one at the earliest date, one at the latest date, both at 'baseline' y.
     let baselineData = [];
     if (chartData.length > 0) {
         const earliest = chartData[0].x;
@@ -99,20 +91,13 @@ async function generateTemperatureChart(data, benchmark, timeframeDays) {
                     type: "time",
                     time: {
                         tooltipFormat: "DD MMM YYYY, HH:mm",
-                        displayFormats: {
-                            hour: "DD MMM, HH:mm",
-                            day: "DD MMM"
-                        }
+                        displayFormats: { hour: "DD MMM, HH:mm", day: "DD MMM" }
                     },
                     title: { display: true, text: "Date" }
                 },
-                y: {
-                    title: { display: true, text: "Temperature °F" }
-                }
+                y: { title: { display: true, text: "Temperature °F" } }
             },
-            plugins: {
-                legend: { position: "bottom" }
-            }
+            plugins: { legend: { position: "bottom" } }
         }
     };
 
@@ -120,25 +105,21 @@ async function generateTemperatureChart(data, benchmark, timeframeDays) {
 }
 
 async function generateHeartRateChart(data, benchmark, timeframeDays) {
-    // Filter & sort logs by date so the line connects in chronological order
     const filteredData = filterDataByTimeframe(data, timeframeDays)
         .sort((a, b) => a.measurementDate - b.measurementDate);
 
-    // Convert each log entry into a { x, y } point for Chart.js time scale
     const chartData = filteredData.map(d => ({
-        x: d.measurementDate, // numeric timestamp
+        x: d.measurementDate,
         y: d.value
     }));
 
-    // Create a color array for each data point
     const colors = filteredData.map(d => {
         const value = d.value;
         if (value == null) return "#C0C0C0";
         const { min, max } = benchmark;
         if (value >= min && value <= max) return "#00B050"; // green
-        if ((value >= min - 1 && value < min) || (value > max && value <= max + 1)) {
+        if ((value >= min - 1 && value < min) || (value > max && value <= max + 1))
             return "#FFA63E"; // borderline
-        }
         return "#FA114F"; // outlier
     });
 
@@ -164,20 +145,13 @@ async function generateHeartRateChart(data, benchmark, timeframeDays) {
                     type: "time",
                     time: {
                         tooltipFormat: "DD MMM YYYY, HH:mm",
-                        displayFormats: {
-                            hour: "DD MMM, HH:mm",
-                            day: "DD MMM"
-                        }
+                        displayFormats: { hour: "DD MMM, HH:mm", day: "DD MMM" }
                     },
                     title: { display: true, text: "Date" }
                 },
-                y: {
-                    title: { display: true, text: "Heart Rate BPM" }
-                }
+                y: { title: { display: true, text: "Heart Rate BPM" } }
             },
-            plugins: {
-                legend: { position: "bottom" }
-            }
+            plugins: { legend: { position: "bottom" } }
         }
     };
 
@@ -187,34 +161,33 @@ async function generateHeartRateChart(data, benchmark, timeframeDays) {
 function generateSurveysSection(doc, surveyData) {
     // Start a new page for surveys
     doc.addPage();
+    // Reset main font to 12pt after header/footer
+    doc.font("Helvetica").fontSize(12);
 
-    // Title for entire Surveys section
+    // Title for the entire surveys section
     doc.font("Helvetica-Bold").fontSize(16)
         .text("Survey Responses", { align: "center" })
         .moveDown(1);
 
-    // Helpers to keep font usage consistent
+    // Helper functions to ensure consistent font usage
     function setQuestionFont() {
-        // *** Make sure question text is always the same size & style
         doc.font("Helvetica-Bold").fontSize(12);
     }
     function setAnswerFont() {
-        // *** Make sure answer text is always the same size & style
         doc.font("Helvetica").fontSize(12);
     }
 
-    // Helper for blank or partial answers
+    // Helper to produce the answer text with units (for weight/height)
     function getAnswerText(q) {
         if (!q.valueList || !q.valueList.length) {
             return "(No answer given)";
         }
         const nonEmpty = q.valueList.filter(ans => ans.trim() !== "");
         if (!nonEmpty.length) return "(No answer given)";
-
-        // If question mentions "weight" or "height", append units to numeric answers
         const questionText = (q.question || "").toLowerCase();
         let appendedAnswers = nonEmpty.map(ans => {
             const trimmed = ans.trim();
+            // If numeric and question mentions "weight" or "height", add units.
             const isNumeric = /^[0-9]+(\.[0-9]+)?$/.test(trimmed);
             if (isNumeric) {
                 if (questionText.includes("weight")) {
@@ -225,7 +198,6 @@ function generateSurveysSection(doc, surveyData) {
             }
             return trimmed;
         });
-
         return appendedAnswers.join(", ");
     }
 
@@ -235,77 +207,75 @@ function generateSurveysSection(doc, surveyData) {
         return;
     }
 
-    // Loop over each survey
     surveyData.forEach((survey, surveyIndex) => {
-        // Add extra spacing before subsequent surveys
         if (surveyIndex > 0) {
+            // Extra space before each new survey
             doc.moveDown(2);
         }
-
-        // Format submission date
+        // Format submission date and frequency
         const submissionDateStr = survey.submissionDate
-            ? moment(survey.submissionDate).tz("Asia/Kolkata").format("DD MMM YYYY")
+            ? moment(survey.submissionDate).tz(TIMEZONE).format("DD MMM YYYY")
             : "No submission date";
+        const frequency = survey.frequency || "N/A";
 
-        // SURVEY TITLE
+        // Survey title (bold, 14pt)
         doc.font("Helvetica-Bold").fontSize(14)
-            .text(`Survey #${surveyIndex + 1}: ${survey.title || "Untitled"} (${submissionDateStr})`)
+            .text(`Survey #${surveyIndex + 1}: ${survey.title || "Untitled"} (${submissionDateStr})`, { align: "left" })
             .moveDown(0.5);
 
-        // FREQUENCY & STATUS
-        doc.font("Helvetica").fontSize(12);
-        if (survey.frequency) {
-            doc.text(`Frequency: ${survey.frequency}`, { align: "left" }).moveDown(0.5);
-        }
-        doc.text(`Submission Status: ${survey.submissionStatus || "UNKNOWN"}`, { align: "left" })
-            .moveDown(1);
+        // Frequency and submission status
+        doc.font("Helvetica").fontSize(12)
+            .text(`Frequency: ${frequency}`, { align: "left" })
+            .moveDown(0.25)
+            .text(`Submission Status: ${survey.submissionStatus || "UNKNOWN"}`, { align: "left" })
+            .moveDown(0.75);
 
-        // QUESTIONS
         if (Array.isArray(survey.assessmentLogs)) {
             survey.assessmentLogs.forEach((q, idx) => {
-                // Question in bold, size 12
+                // Ensure question text is in bold, 12pt
                 setQuestionFont();
                 doc.text(`${idx + 1}) ${q.question}`, { align: "left" })
                     .moveDown(0.25);
 
-                // Answer in normal, size 12
+                // Answer text in regular font (12pt)
                 setAnswerFont();
                 const answerText = getAnswerText(q);
-
                 if (q.questionType === "scale_rating") {
-                    doc.text(`Rating: ${answerText}`, { align: "left" }).moveDown(0.75);
+                    doc.text(`Rating: ${answerText}`, { align: "left" })
+                        .moveDown(0.75);
                 } else {
-                    doc.text(`Answer: ${answerText}`, { align: "left" }).moveDown(0.75);
+                    doc.text(`Answer: ${answerText}`, { align: "left" })
+                        .moveDown(0.75);
                 }
             });
         }
     });
 }
 
-
 function addHeaderFooterAbsolute(doc, patientInfo) {
     doc.save();
 
-    // Header
-    doc.fontSize(10)
+    // Header (small font)
+    doc.font("Helvetica-Bold").fontSize(10)
         .text("Patient Health Report", doc.page.margins.left, 20, {
             width: doc.page.width - doc.page.margins.left - doc.page.margins.right,
             align: "center",
             lineBreak: false
         });
-    doc.text(`Name: ${patientInfo.name} | Age: ${patientInfo.age}`, doc.page.margins.left, 35, {
-        width: doc.page.width - doc.page.margins.left - doc.page.margins.right,
-        align: "center",
-        lineBreak: false
-    });
+    doc.font("Helvetica").fontSize(10)
+        .text(`Name: ${patientInfo.name} | Age: ${patientInfo.age}`, doc.page.margins.left, 35, {
+            width: doc.page.width - doc.page.margins.left - doc.page.margins.right,
+            align: "center",
+            lineBreak: false
+        });
     doc.text(`Report Date: ${moment().tz(TIMEZONE).format("DD MMM YYYY")}`, doc.page.margins.left, 50, {
         width: doc.page.width - doc.page.margins.left - doc.page.margins.right,
         align: "center",
         lineBreak: false
     });
 
-    // Footer
-    doc.fontSize(8)
+    // Footer (small font)
+    doc.font("Helvetica").fontSize(8)
         .text("© 2025 Restore Me. All Rights Reserved.",
             doc.page.margins.left,
             doc.page.height - doc.page.margins.bottom - 20,
@@ -318,55 +288,33 @@ function addHeaderFooterAbsolute(doc, patientInfo) {
     doc.restore();
 }
 
-/**
- * Generates a blood pressure chart (systolic + diastolic) over time.
- * - `logs`: Array of blood-pressure measurements (with `systolic`, `diastolic`, `measurementDate`).
- * - `benchMark`: The benchmark ranges for systolic and diastolic.
- * - `timeframeDays`: How many days of data to filter/display.
- */
 async function generateBloodPressureChart(logs, benchMark, timeframeDays) {
-    // Filter & sort logs by date
     const filteredData = filterDataByTimeframe(logs, timeframeDays)
         .sort((a, b) => a.measurementDate - b.measurementDate);
-
-    // Prepare data arrays for Chart.js
     const systolicData = filteredData.map(d => ({ x: d.measurementDate, y: d.systolic }));
     const diastolicData = filteredData.map(d => ({ x: d.measurementDate, y: d.diastolic }));
 
-    // Helper to classify a systolic value => color (Normal/Borderline/Outlier)
     function classifySystolic(value) {
-        const { lowBorderline, normal, highBorderline, high } = benchMark.systolic;
-        // Normal
+        const { lowBorderline, normal, highBorderline } = benchMark.systolic;
         if (value >= normal.min && value <= normal.max) return "#00B050";
-        // Borderline (either lowBorderline or highBorderline)
-        if (
-            (value >= lowBorderline.min && value <= lowBorderline.max) ||
-            (value >= highBorderline.min && value <= highBorderline.max)
-        ) {
+        if ((value >= lowBorderline.min && value <= lowBorderline.max) ||
+            (value >= highBorderline.min && value <= highBorderline.max)) {
             return "#FFA63E";
         }
-        // Anything else => Outlier
         return "#FA114F";
     }
-
-    // Helper to classify a diastolic value => color
     function classifyDiastolic(value) {
-        const { lowBorderline, normal, highBorderline, high } = benchMark.diastolic;
+        const { lowBorderline, normal, highBorderline } = benchMark.diastolic;
         if (value >= normal.min && value <= normal.max) return "#00B050";
-        if (
-            (value >= lowBorderline.min && value <= lowBorderline.max) ||
-            (value >= highBorderline.min && value <= highBorderline.max)
-        ) {
+        if ((value >= lowBorderline.min && value <= lowBorderline.max) ||
+            (value >= highBorderline.min && value <= highBorderline.max)) {
             return "#FFA63E";
         }
         return "#FA114F";
     }
-
-    // Create color arrays for each data point
     const systolicColors = filteredData.map(d => classifySystolic(d.systolic));
     const diastolicColors = filteredData.map(d => classifyDiastolic(d.diastolic));
 
-    // Two datasets: one for SYS, one for DIA
     const configuration = {
         type: "line",
         data: {
@@ -374,9 +322,9 @@ async function generateBloodPressureChart(logs, benchMark, timeframeDays) {
                 {
                     label: "SYS",
                     data: systolicData,
-                    borderColor: "#0047FF",              // Blue line
+                    borderColor: "#0047FF",
                     backgroundColor: "rgba(0,0,0,0)",
-                    pointStyle: "rectRot",               // Square points
+                    pointStyle: "rectRot",
                     pointBackgroundColor: systolicColors,
                     pointBorderColor: systolicColors,
                     spanGaps: true
@@ -384,10 +332,10 @@ async function generateBloodPressureChart(logs, benchMark, timeframeDays) {
                 {
                     label: "DIA",
                     data: diastolicData,
-                    borderColor: "#636363",              // Gray/black line
+                    borderColor: "#636363",
                     backgroundColor: "rgba(0,0,0,0)",
-                    borderDash: [10, 10],                // Dashed line
-                    pointStyle: "circle",                // Circle points
+                    borderDash: [10, 10],
+                    pointStyle: "circle",
                     pointBackgroundColor: diastolicColors,
                     pointBorderColor: diastolicColors,
                     spanGaps: true
@@ -400,76 +348,35 @@ async function generateBloodPressureChart(logs, benchMark, timeframeDays) {
                     type: "time",
                     time: {
                         tooltipFormat: "DD MMM YYYY, HH:mm",
-                        displayFormats: {
-                            hour: "DD MMM, HH:mm",
-                            day: "DD MMM"
-                        }
+                        displayFormats: { hour: "DD MMM, HH:mm", day: "DD MMM" }
                     },
                     title: { display: true, text: "Date" }
                 },
-                y: {
-                    title: { display: true, text: "BP mmHg" }
-                }
+                y: { title: { display: true, text: "BP mmHg" } }
             },
-            plugins: {
-                legend: { position: "bottom" }
-            }
+            plugins: { legend: { position: "bottom" } }
         }
     };
 
-    // Render chart to buffer
     return chartJSNodeCanvas.renderToBuffer(configuration);
 }
 
-/**
- * Generates a multi-line blood glucose chart with three categories:
- *  - FASTING
- *  - AFTER_A_MEAL
- *  - RANDOM
- *
- * Each category gets its own line color/style, and each data point
- * is color-coded (normal, borderline, outlier) based on the provided
- * benchmark ranges.
- */
 async function generateBloodGlucoseChart(logs, benchMark, timeframeDays) {
-    // 1) Filter & sort logs by date
     const filteredData = filterDataByTimeframe(logs, timeframeDays)
         .sort((a, b) => a.measurementDate - b.measurementDate);
-
-    // 2) Separate logs by category
     const fastingLogs = filteredData.filter(d => d.category === "FASTING");
     const afterMealLogs = filteredData.filter(d => d.category === "AFTER_A_MEAL");
     const randomLogs = filteredData.filter(d => d.category === "RANDOM");
 
-    // Helper: classify a glucose value => color (normal/borderline/outlier)
-    // - FASTING => benchMark.beforeMeals
-    // - AFTER_A_MEAL or RANDOM => benchMark.afterMealsAndRandom
     function classifyGlucose(value, category) {
-        const ranges = (category === "FASTING")
-            ? benchMark.beforeMeals
-            : benchMark.afterMealsAndRandom;
-
-        // Normal
-        if (value >= ranges.normal.min && value <= ranges.normal.max) {
-            return "#00B050"; // green
-        }
-
-        // Borderline if it’s in either lowBorderline or highBorderline
-        const inLowBorder = (
-            value >= ranges.lowBorderline.min && value <= ranges.lowBorderline.max
-        );
-        const inHighBorder = (
-            value >= ranges.highBorderline.min && value <= ranges.highBorderline.max
-        );
-        if (inLowBorder || inHighBorder) {
-            return "#FFA63E"; // orange borderline
-        }
-
-        // Otherwise, outlier
-        return "#FA114F"; // red outlier
+        const ranges = (category === "FASTING") ? benchMark.beforeMeals : benchMark.afterMealsAndRandom;
+        if (value >= ranges.normal.min && value <= ranges.normal.max) return "#00B050";
+        const inLowBorder = (value >= ranges.lowBorderline.min && value <= ranges.lowBorderline.max);
+        const inHighBorder = (value >= ranges.highBorderline.min && value <= ranges.highBorderline.max);
+        if (inLowBorder || inHighBorder) return "#FFA63E";
+        return "#FA114F";
     }
 
-    // Convert logs => Chart.js data points + store a color for each point
     function makeDatasetData(arr, category) {
         return arr.map(d => ({
             x: d.measurementDate,
@@ -478,29 +385,12 @@ async function generateBloodGlucoseChart(logs, benchMark, timeframeDays) {
         }));
     }
 
-    // 3) Define style for each category (line color, dash, point shape, etc.)
     const categoryStyles = {
-        FASTING: {
-            label: "Fasting",
-            lineColor: "#800080",    // purple
-            pointStyle: "circle",    // round points
-            borderDash: []
-        },
-        AFTER_A_MEAL: {
-            label: "After A Meal",
-            lineColor: "#FF1493",    // pink
-            pointStyle: "triangle",  // triangle points
-            borderDash: []
-        },
-        RANDOM: {
-            label: "Random",
-            lineColor: "#0000FF",    // blue
-            pointStyle: "rectRot",   // diamond
-            borderDash: [10, 10]     // dashed line for "random"
-        }
+        FASTING: { label: "Fasting", lineColor: "#800080", pointStyle: "circle", borderDash: [] },
+        AFTER_A_MEAL: { label: "After A Meal", lineColor: "#FF1493", pointStyle: "triangle", borderDash: [] },
+        RANDOM: { label: "Random", lineColor: "#0000FF", pointStyle: "rectRot", borderDash: [10, 10] }
     };
 
-    // Build an array of datasets—one per category that actually has data
     function buildDataset(logArr, category) {
         if (!logArr.length) return null;
         const dataPoints = makeDatasetData(logArr, category);
@@ -521,14 +411,11 @@ async function generateBloodGlucoseChart(logs, benchMark, timeframeDays) {
     const datasets = [];
     const fastingDataset = buildDataset(fastingLogs, "FASTING");
     if (fastingDataset) datasets.push(fastingDataset);
-
     const afterMealDataset = buildDataset(afterMealLogs, "AFTER_A_MEAL");
     if (afterMealDataset) datasets.push(afterMealDataset);
-
     const randomDataset = buildDataset(randomLogs, "RANDOM");
     if (randomDataset) datasets.push(randomDataset);
 
-    // 4) Chart.js configuration
     const configuration = {
         type: "line",
         data: { datasets },
@@ -538,68 +425,45 @@ async function generateBloodGlucoseChart(logs, benchMark, timeframeDays) {
                     type: "time",
                     time: {
                         tooltipFormat: "DD MMM YYYY, HH:mm",
-                        displayFormats: {
-                            hour: "DD MMM, HH:mm",
-                            day: "DD MMM"
-                        }
+                        displayFormats: { hour: "DD MMM, HH:mm", day: "DD MMM" }
                     },
                     title: { display: true, text: "Date" }
                 },
-                y: {
-                    title: { display: true, text: "Blood Glucose mg/dL" }
-                }
+                y: { title: { display: true, text: "Blood Glucose mg/dL" } }
             },
-            plugins: {
-                legend: { position: "bottom" }
-            }
+            plugins: { legend: { position: "bottom" } }
         }
     };
 
-    // 5) Render chart to image buffer
     return chartJSNodeCanvas.renderToBuffer(configuration);
 }
 
 async function generateNutritionChart(nutritionData, timeframeDays) {
-    // 1) Filter & sort logs by date so the line is chronological
     const filteredLogs = filterNutritionLogsByTimeframe(nutritionData.logs, timeframeDays)
         .sort((a, b) => a.createdAt - b.createdAt);
-
-    // 2) Convert logs => Chart.js data points
-    //    We'll store the numeric timestamp in `x` and consumption in `y`.
     const consumptionData = filteredLogs.map(log => ({
         x: log.createdAt,
         y: log.consumed
     }));
-
-    // 3) Classify each consumption => color (Normal, Borderline, Outlier)
     function classifyCalorie(value) {
         const { lowBorderline, normal, highBorderline } = nutritionData.benchMarks;
-        // Outlier if < lowBorderline.min or > highBorderline.max
-        if (value < lowBorderline.min || value > highBorderline.max) return "#FA114F"; // red
-        // Borderline if in lowBorderline or highBorderline
+        if (value < lowBorderline.min || value > highBorderline.max) return "#FA114F";
         const inLow = (value >= lowBorderline.min && value <= lowBorderline.max);
         const inHigh = (value >= highBorderline.min && value <= highBorderline.max);
-        if (inLow || inHigh) return "#FFA63E"; // orange
-        // Otherwise, normal
-        return "#00B050"; // green
+        if (inLow || inHigh) return "#FFA63E";
+        return "#00B050";
     }
-
-    // Create a color array for each data point
     const colors = filteredLogs.map(log => classifyCalorie(log.consumed));
-
-    // 4) We'll add a single horizontal line for the "currentGoal" (e.g. 2900)
     let goalData = [];
     if (consumptionData.length > 0) {
         const earliest = consumptionData[0].x;
         const latest = consumptionData[consumptionData.length - 1].x;
-        const goalY = nutritionData.currentGoal; // e.g. 2900
+        const goalY = nutritionData.currentGoal;
         goalData = [
             { x: earliest, y: goalY },
             { x: latest, y: goalY }
         ];
     }
-
-    // 5) Build the Chart.js configuration
     const configuration = {
         type: "line",
         data: {
@@ -607,7 +471,7 @@ async function generateNutritionChart(nutritionData, timeframeDays) {
                 {
                     label: "Consumption",
                     data: consumptionData,
-                    borderColor: "#636363",             // dotted grey line
+                    borderColor: "#636363",
                     backgroundColor: "rgba(0,0,0,0)",
                     borderDash: [10, 10],
                     pointBackgroundColor: colors,
@@ -617,7 +481,7 @@ async function generateNutritionChart(nutritionData, timeframeDays) {
                 {
                     label: `Goal (${nutritionData.currentGoal} ${nutritionData.unit})`,
                     data: goalData,
-                    borderColor: "#0047FF",             // solid blue line
+                    borderColor: "#0047FF",
                     pointRadius: 0,
                     borderDash: []
                 }
@@ -629,96 +493,45 @@ async function generateNutritionChart(nutritionData, timeframeDays) {
                     type: "time",
                     time: {
                         tooltipFormat: "DD MMM YYYY",
-                        displayFormats: {
-                            day: "DD MMM"
-                        }
+                        displayFormats: { day: "DD MMM" }
                     },
                     title: { display: true, text: "Date" }
                 },
-                y: {
-                    title: { display: true, text: `Calorie (${nutritionData.unit})` }
-                }
+                y: { title: { display: true, text: `Calorie (${nutritionData.unit})` } }
             },
-            plugins: {
-                legend: { position: "bottom" }
-            }
+            plugins: { legend: { position: "bottom" } }
         }
     };
-
-    // 6) Render chart to buffer & return
     return chartJSNodeCanvas.renderToBuffer(configuration);
 }
 
-/**
- * Generates a bar chart for daily water intake.
- * - Each bar is green if consumed <= goal, red if consumed > goal.
- * - X-axis is time-based, using createdAt.
- */
-/**
- * Generates a stacked bar chart for water intake.
- * For each day:
- *   - If consumed < goal:
- *       Green bar from 0..consumed
- *       Blue bar from consumed..goal
- *       Red bar = 0
- *   - If consumed == goal:
- *       Entire bar is green (no blue leftover, no red excess)
- *   - If consumed > goal:
- *       Green bar from 0..goal
- *       Blue bar = 0
- *       Red bar from goal..consumed
- */
 async function generateHydrationStackedChart(hydrateData, timeframeDays) {
-    // 1) Filter & sort logs by date (using createdAt)
     const filteredLogs = filterNutritionLogsByTimeframe(hydrateData.logs, timeframeDays)
         .sort((a, b) => a.createdAt - b.createdAt);
-
-    // 2) Prepare 3 separate datasets for stacked bars:
-    //    - "Intake" (green)
-    //    - "Goal" (blue leftover)
-    //    - "Excess" (red above goal)
     const dataIntake = [];
     const dataGoal = [];
     const dataExcess = [];
-
     for (const log of filteredLogs) {
         const dateX = log.createdAt;
         const consumed = log.consumed;
         const goal = log.goal;
-
         if (consumed < goal) {
-            // Consumed is below goal
-            dataIntake.push({ x: dateX, y: consumed });      // green portion
-            dataGoal.push({ x: dateX, y: goal - consumed }); // leftover goal in blue
-            dataExcess.push({ x: dateX, y: 0 });             // no excess
+            dataIntake.push({ x: dateX, y: consumed });
+            dataGoal.push({ x: dateX, y: goal - consumed });
+            dataExcess.push({ x: dateX, y: 0 });
         } else {
-            // Consumed >= goal
-            dataIntake.push({ x: dateX, y: Math.min(goal, consumed) }); // green portion up to the goal
-            dataGoal.push({ x: dateX, y: 0 });                          // no leftover if consumed >= goal
-            dataExcess.push({ x: dateX, y: consumed - goal });          // red portion above the goal (0 if equal)
+            dataIntake.push({ x: dateX, y: Math.min(goal, consumed) });
+            dataGoal.push({ x: dateX, y: 0 });
+            dataExcess.push({ x: dateX, y: consumed - goal });
         }
     }
-
-    // 3) Build Chart.js config with 3 stacked bar datasets
     const configuration = {
         type: "bar",
         data: {
             datasets: [
-                {
-                    label: "Intake",
-                    data: dataIntake,
-                    backgroundColor: "#00B050" // green
-                },
-                {
-                    label: "Goal",
-                    data: dataGoal,
-                    backgroundColor: "#0047FF" // blue
-                },
-                {
-                    label: "Excess",
-                    data: dataExcess,
-                    backgroundColor: "#FA114F" // red
-                }
+                { label: "Intake", data: dataIntake, backgroundColor: "#00B050" },
+                { label: "Goal", data: dataGoal, backgroundColor: "#0047FF" },
+                { label: "Excess", data: dataExcess, backgroundColor: "#FA114F" }
             ]
         },
         options: {
@@ -727,25 +540,18 @@ async function generateHydrationStackedChart(hydrateData, timeframeDays) {
                     type: "time",
                     time: {
                         tooltipFormat: "DD MMM YYYY",
-                        displayFormats: {
-                            day: "DD MMM"
-                        }
+                        displayFormats: { day: "DD MMM" }
                     },
-                    stacked: true, // Enable stacking on X axis
+                    stacked: true,
                     title: { display: true, text: "Date" }
                 },
-                y: {
-                    stacked: true, // Enable stacking on Y axis
-                    title: { display: true, text: `Milliliter (${hydrateData.unit})` }
-                }
+                y: { stacked: true, title: { display: true, text: `Milliliter (${hydrateData.unit})` } }
             },
             plugins: {
                 legend: { position: "bottom" },
                 tooltip: {
                     callbacks: {
-                        // Show daily consumed & goal in tooltip
-                        label: (context) => {
-                            // context.raw is the { x, y } object from the dataset
+                        label: context => {
                             const datasetLabel = context.dataset.label || "";
                             const val = context.parsed.y;
                             return `${datasetLabel}: ${val} ${hydrateData.unit}`;
@@ -755,30 +561,17 @@ async function generateHydrationStackedChart(hydrateData, timeframeDays) {
             }
         }
     };
-
-    // 4) Render the chart to a buffer & return
     return chartJSNodeCanvas.renderToBuffer(configuration);
 }
 
-/**
- * Generates a line chart of weight in lbs (converted from kg).
- * The logs have `createdAt` as the timestamp, `value` in kg.
- */
 async function generateWeightChart(weightData, timeframeDays) {
-    // 1) Filter & sort logs by date
     const filteredLogs = filterNutritionLogsByTimeframe(weightData.logs, timeframeDays)
         .sort((a, b) => a.createdAt - b.createdAt);
-
-    // 2) Convert each log’s kg value to lbs
     const chartData = filteredLogs.map(d => ({
-        x: d.createdAt,                // numeric timestamp
-        y: d.value * 2.20462           // kg -> lbs
+        x: d.createdAt,
+        y: d.value * 2.20462 // convert kg to lbs
     }));
-
-    // 3) Color all points red (since no valid benchmark ranges)
     const colors = filteredLogs.map(() => "#FA114F");
-
-    // 4) Build Chart.js configuration
     const configuration = {
         type: "line",
         data: {
@@ -790,7 +583,7 @@ async function generateWeightChart(weightData, timeframeDays) {
                     backgroundColor: "rgba(0,0,0,0)",
                     pointBackgroundColor: colors,
                     pointBorderColor: colors,
-                    borderDash: [10, 10],  // dotted line
+                    borderDash: [10, 10],
                     spanGaps: true
                 }
             ]
@@ -801,75 +594,35 @@ async function generateWeightChart(weightData, timeframeDays) {
                     type: "time",
                     time: {
                         tooltipFormat: "DD MMM YYYY",
-                        displayFormats: {
-                            day: "DD MMM"
-                        }
+                        displayFormats: { day: "DD MMM" }
                     },
                     title: { display: true, text: "Date" }
                 },
-                y: {
-                    title: { display: true, text: "Pounds (lbs)" }
-                }
+                y: { title: { display: true, text: "Pounds (lbs)" } }
             },
-            plugins: {
-                legend: { position: "bottom" }
-            }
+            plugins: { legend: { position: "bottom" } }
         }
     };
-
-    // 5) Render chart to buffer
     return chartJSNodeCanvas.renderToBuffer(configuration);
 }
 
-/**
- * Generates an activity chart with:
- *   - A horizontal goal line at `activityData.calories`.
- *   - A dotted line for daily `caloriesBurnt`.
- *   - Color-coded points based on benchmark ranges:
- *       - Normal => green
- *       - Borderline => orange
- *       - Outlier => red
- */
 async function generateActivityChart(activityData, timeframeDays) {
-    // 1) Filter & sort logs by date so the line is chronological
     const filteredLogs = filterDataByTimeframe(activityData.logs, timeframeDays)
         .sort((a, b) => a.measurementDate - b.measurementDate);
-
-    // 2) Convert logs => Chart.js data points for daily `caloriesBurnt`
     const achievedData = filteredLogs.map(d => ({
         x: d.measurementDate,
         y: d.caloriesBurnt
     }));
-
-    // 3) Color-code each point based on whether `caloriesBurnt` is normal, borderline, or outlier
     function classifyBurnt(value) {
         const { lowBorderline, normal, highBorderline } = activityData.benchMarks;
-
-        // If no valid benchmarks, just default all to red or some color
-        if (!lowBorderline || !normal || !highBorderline) {
-            return "#FA114F"; // red
-        }
-
-        // Outlier if below lowBorderline.min or above highBorderline.max
-        if (value < lowBorderline.min || value > highBorderline.max) {
-            return "#FA114F"; // red outlier
-        }
-
-        // Borderline if in the lowBorderline range or the highBorderline range
+        if (!lowBorderline || !normal || !highBorderline) return "#FA114F";
+        if (value < lowBorderline.min || value > highBorderline.max) return "#FA114F";
         const inLowBorder = (value >= lowBorderline.min && value <= lowBorderline.max);
         const inHighBorder = (value >= highBorderline.min && value <= highBorderline.max);
-        if (inLowBorder || inHighBorder) {
-            return "#FFA63E"; // orange borderline
-        }
-
-        // Otherwise normal
-        return "#00B050"; // green
+        if (inLowBorder || inHighBorder) return "#FFA63E";
+        return "#00B050";
     }
-
     const colors = filteredLogs.map(d => classifyBurnt(d.caloriesBurnt));
-
-    // 4) Create a horizontal "Goal" line from earliest date to latest date
-    //    using `activityData.calories` as the y-value.
     let goalLineData = [];
     if (achievedData.length > 0) {
         const earliest = achievedData[0].x;
@@ -879,8 +632,6 @@ async function generateActivityChart(activityData, timeframeDays) {
             { x: latest, y: activityData.calories }
         ];
     }
-
-    // 5) Build the Chart.js configuration
     const configuration = {
         type: "line",
         data: {
@@ -892,13 +643,13 @@ async function generateActivityChart(activityData, timeframeDays) {
                     backgroundColor: "rgba(0,0,0,0)",
                     pointBackgroundColor: colors,
                     pointBorderColor: colors,
-                    borderDash: [10, 10],  // dotted line
+                    borderDash: [10, 10],
                     spanGaps: true
                 },
                 {
                     label: `Goal (${activityData.calories.toFixed(2)} ${activityData.unit})`,
                     data: goalLineData,
-                    borderColor: "#0047FF", // blue line
+                    borderColor: "#0047FF",
                     pointRadius: 0,
                     borderDash: []
                 }
@@ -910,76 +661,38 @@ async function generateActivityChart(activityData, timeframeDays) {
                     type: "time",
                     time: {
                         tooltipFormat: "DD MMM YYYY",
-                        displayFormats: {
-                            day: "DD MMM"
-                        }
+                        displayFormats: { day: "DD MMM" }
                     },
                     title: { display: true, text: "Date" }
                 },
-                y: {
-                    title: { display: true, text: `Calorie (${activityData.unit})` }
-                }
+                y: { title: { display: true, text: `Calorie (${activityData.unit})` } }
             },
-            plugins: {
-                legend: { position: "bottom" }
-            }
+            plugins: { legend: { position: "bottom" } }
         }
     };
-
-    // 6) Render chart to buffer
     return chartJSNodeCanvas.renderToBuffer(configuration);
 }
 
-/**
-* Generates a line chart for step count, filtered by logs from "garmin-connect".
-* - A horizontal line for `stepData.goalAverage`.
-* - A dotted line for daily step values (color-coded normal/borderline/outlier).
-*/
 async function generateStepCountChart(stepData, timeframeDays) {
-    // 1) Filter logs by source = "garmin-connect"
     const garminLogs = stepData.logs.filter(
         log => log.source && log.source.name === "garmin-connect"
     );
-
-    // 2) Filter logs by timeframe
     const filteredLogs = filterDataByTimeframe(garminLogs, timeframeDays)
         .sort((a, b) => a.measurementDate - b.measurementDate);
-
-    // 3) Convert logs => Chart.js data points
     const stepDataPoints = filteredLogs.map(d => ({
         x: d.measurementDate,
         y: d.value
     }));
-
-    // 4) Color-code each point based on benchmark ranges
     function classifySteps(value) {
         const { lowBorderline, normal, highBorderline } = stepData.benchMarks;
-
-        // If no valid ranges, just color all red
-        if (!lowBorderline || !normal || !highBorderline) {
-            return "#FA114F"; // red
-        }
-
-        // Outlier if < lowBorderline.min or > highBorderline.max
-        if (value < lowBorderline.min || value > highBorderline.max) {
-            return "#FA114F"; // red outlier
-        }
-
-        // Borderline if in [lowBorderline.min..lowBorderline.max] or [highBorderline.min..highBorderline.max]
+        if (!lowBorderline || !normal || !highBorderline) return "#FA114F";
+        if (value < lowBorderline.min || value > highBorderline.max) return "#FA114F";
         const inLowBorder = (value >= lowBorderline.min && value <= lowBorderline.max);
         const inHighBorder = (value >= highBorderline.min && value <= highBorderline.max);
-        if (inLowBorder || inHighBorder) {
-            return "#FFA63E"; // orange borderline
-        }
-
-        // Otherwise normal
-        return "#00B050"; // green
+        if (inLowBorder || inHighBorder) return "#FFA63E";
+        return "#00B050";
     }
-
     const colors = filteredLogs.map(d => classifySteps(d.value));
-
-    // 5) Build a horizontal goal line from earliest to latest date
-    //    using `stepData.goalAverage` as y-value
     let goalLineData = [];
     if (stepDataPoints.length > 0) {
         const earliest = stepDataPoints[0].x;
@@ -989,8 +702,6 @@ async function generateStepCountChart(stepData, timeframeDays) {
             { x: latest, y: stepData.goalAverage }
         ];
     }
-
-    // 6) Create Chart.js configuration
     const configuration = {
         type: "line",
         data: {
@@ -1002,13 +713,13 @@ async function generateStepCountChart(stepData, timeframeDays) {
                     backgroundColor: "rgba(0,0,0,0)",
                     pointBackgroundColor: colors,
                     pointBorderColor: colors,
-                    borderDash: [10, 10], // dotted line
+                    borderDash: [10, 10],
                     spanGaps: true
                 },
                 {
                     label: `Goal (${stepData.goalAverage} ${stepData.unit})`,
                     data: goalLineData,
-                    borderColor: "#0047FF", // blue line
+                    borderColor: "#0047FF",
                     pointRadius: 0
                 }
             ]
@@ -1019,125 +730,70 @@ async function generateStepCountChart(stepData, timeframeDays) {
                     type: "time",
                     time: {
                         tooltipFormat: "DD MMM YYYY",
-                        displayFormats: {
-                            day: "DD MMM"
-                        }
+                        displayFormats: { day: "DD MMM" }
                     },
                     title: { display: true, text: "Date" }
                 },
-                y: {
-                    title: { display: true, text: stepData.unit }
-                }
+                y: { title: { display: true, text: stepData.unit } }
             },
-            plugins: {
-                legend: { position: "bottom" }
-            }
+            plugins: { legend: { position: "bottom" } }
         }
     };
-
-    // 7) Render chart to buffer
     return chartJSNodeCanvas.renderToBuffer(configuration);
 }
 
-/**
- * Generates a stacked bar chart showing medication logs:
- *   - Each bar's total height = totalPrescribed.
- *   - Lower portion ("Consumed") is green if fullyCompliant, red otherwise.
- *   - Upper portion ("Remaining") is gray.
- */
 async function generateMedicationStackedChart(medicationData, timeframeDays) {
-    // 1) Filter & sort logs by date (using "currentDate")
     const filteredLogs = filterMedicationDataByTimeframe(
         medicationData.logs,
         timeframeDays,
         "currentDate"
     ).sort((a, b) => a.currentDate - b.currentDate);
 
-    // 2) Build arrays for "Consumed" and "Remaining"
     const consumedData = [];
     const leftoverData = [];
-
-    // For coloring consumed portion: green if fullyCompliant, else red
     const consumedColors = [];
 
     filteredLogs.forEach(log => {
         const dateX = log.currentDate;
         const consumed = log.totalConsumed;
         const leftover = Math.max(0, log.totalPrescribed - consumed);
-
         consumedData.push({ x: dateX, y: consumed });
         leftoverData.push({ x: dateX, y: leftover });
-
-        // If fullyCompliant => green, else red
         consumedColors.push(log.fullyCompliant ? "#00B050" : "#FA114F");
     });
 
-    // 3) Chart.js configuration (stacked bar)
     const configuration = {
         type: "bar",
         data: {
             datasets: [
                 {
-                    // REAL DATASET #1: Consumed
                     label: "Consumed",
                     data: consumedData,
                     backgroundColor: consumedColors,
-                    parsing: {
-                        xAxisKey: "x",
-                        yAxisKey: "y"
-                    }
+                    parsing: { xAxisKey: "x", yAxisKey: "y" }
                 },
                 {
-                    // REAL DATASET #2: Remaining
                     label: "Remaining",
                     data: leftoverData,
                     backgroundColor: "#636363",
-                    parsing: {
-                        xAxisKey: "x",
-                        yAxisKey: "y"
-                    }
+                    parsing: { xAxisKey: "x", yAxisKey: "y" }
                 },
-
-                // DUMMY DATASET #3: just for the legend (Compliant)
-                {
-                    label: "Consumed (Compliant)",
-                    backgroundColor: "#00B050",
-                    data: [],        // no data => won't plot bars
-                    // ensure it doesn't stack or show tooltips
-                    stack: "dummy",  // put it on a different stack if needed
-                    barPercentage: 0,
-                    tooltip: { enabled: false }
-                },
-                // DUMMY DATASET #4: just for the legend (Non-Compliant)
-                {
-                    label: "Consumed (Non-Compliant)",
-                    backgroundColor: "#FA114F",
-                    data: [],
-                    stack: "dummy",
-                    barPercentage: 0,
-                    tooltip: { enabled: false }
-                }
+                // Dummy datasets for legend only
+                { label: "Consumed (Compliant)", backgroundColor: "#00B050", data: [], stack: "dummy", barPercentage: 0, tooltip: { enabled: false } },
+                { label: "Consumed (Non-Compliant)", backgroundColor: "#FA114F", data: [], stack: "dummy", barPercentage: 0, tooltip: { enabled: false } }
             ]
         },
         options: {
             scales: {
                 x: {
                     type: "time",
-                    time: {
-                        tooltipFormat: "DD MMM YYYY",
-                        displayFormats: {
-                            day: "DD MMM"
-                        }
-                    },
+                    time: { tooltipFormat: "DD MMM YYYY", displayFormats: { day: "DD MMM" } },
                     stacked: true,
                     title: { display: true, text: "Date" }
                 },
                 y: {
                     stacked: true,
-                    title: {
-                        display: true,
-                        text: medicationData.unit || "units"
-                    }
+                    title: { display: true, text: medicationData.unit || "units" }
                 }
             },
             plugins: {
@@ -1147,13 +803,10 @@ async function generateMedicationStackedChart(medicationData, timeframeDays) {
                         label: context => {
                             const val = context.raw.y;
                             if (context.dataset.label === "Consumed") {
-                                // Check which color is used for this bar
                                 const barColor = context.dataset.backgroundColor[context.dataIndex];
-                                if (barColor === "#00B050") {
-                                    return `Consumed (Compliant): ${val} ${medicationData.unit || "units"}`;
-                                } else {
-                                    return `Consumed (Non-Compliant): ${val} ${medicationData.unit || "units"}`;
-                                }
+                                return barColor === "#00B050"
+                                    ? `Consumed (Compliant): ${val} ${medicationData.unit || "units"}`
+                                    : `Consumed (Non-Compliant): ${val} ${medicationData.unit || "units"}`;
                             } else if (context.dataset.label === "Remaining") {
                                 return `Remaining: ${val} ${medicationData.unit || "units"}`;
                             }
@@ -1163,8 +816,7 @@ async function generateMedicationStackedChart(medicationData, timeframeDays) {
                             if (!tooltipItems.length) return "";
                             const index = tooltipItems[0].dataIndex;
                             const log = filteredLogs[index];
-                            const total = log.totalPrescribed;
-                            return `Total Prescribed: ${total} ${medicationData.unit || "units"}`;
+                            return `Total Prescribed: ${log.totalPrescribed} ${medicationData.unit || "units"}`;
                         }
                     }
                 }
@@ -1172,7 +824,6 @@ async function generateMedicationStackedChart(medicationData, timeframeDays) {
         }
     };
 
-    // 4) Render the chart to a buffer
     return chartJSNodeCanvas.renderToBuffer(configuration);
 }
 
@@ -1197,22 +848,21 @@ async function generatePDF(
         const stream = fs.createWriteStream(pdfPath);
         doc.pipe(stream);
 
-        // Header/footer on the first page
+        // Draw header/footer on first page and reset font
         addHeaderFooterAbsolute(doc, patientInfo);
+        doc.font("Helvetica").fontSize(12);
         doc.y = 70;
 
         doc.on("pageAdded", () => {
             addHeaderFooterAbsolute(doc, patientInfo);
+            doc.font("Helvetica").fontSize(12);
             doc.y = 70;
         });
 
-        // -------------------------
-        // TEMPERATURE SECTION (unchanged)
-        // -------------------------
+        // TEMPERATURE SECTION
         doc.fontSize(16)
             .text(`Body Temperature (Last ${timeframeDays} days)`, { align: "center" })
             .moveDown();
-
         const allTempValues = temperatureData.logs.map(log => log.value);
         const currentTemp = temperatureData.value || "-";
         const averageTemp = allTempValues.length
@@ -1225,7 +875,6 @@ async function generatePDF(
         const lowestTempDate = lowestTempLog
             ? moment(lowestTempLog.measurementDate).tz(TIMEZONE).format("DD MMM YYYY")
             : "-";
-
         doc.fontSize(12)
             .text(`Current Temperature: ${currentTemp}°F`, { align: "left" })
             .moveDown(0.5)
@@ -1233,7 +882,6 @@ async function generatePDF(
             .moveDown(0.5)
             .text(`Lowest Temperature: ${lowestTemp}°F on ${lowestTempDate}`, { align: "left" })
             .moveDown(1.5);
-
         const temperatureChartImage = await generateTemperatureChart(
             temperatureData.logs,
             temperatureData.benchMark,
@@ -1247,13 +895,11 @@ async function generatePDF(
         }).moveDown(3);
 
         doc.moveDown(100);
-        // -------------------------
-        // HEART RATE SECTION (unchanged)
-        // -------------------------
+
+        // HEART RATE SECTION
         doc.fontSize(16)
             .text(`Heart Rate (Last ${timeframeDays} days)`, { align: "center" })
             .moveDown();
-
         const allHrValues = heartRateData.logs.map(log => log.value);
         const currentHr = heartRateData.value || "-";
         const averageHr = allHrValues.length
@@ -1266,7 +912,6 @@ async function generatePDF(
         const lowestHrDate = lowestHrLog
             ? moment(lowestHrLog.measurementDate).tz(TIMEZONE).format("DD MMM YYYY")
             : "-";
-
         doc.fontSize(12)
             .text(`Current Heart Rate: ${currentHr} BPM`, { align: "left" })
             .moveDown(0.5)
@@ -1274,7 +919,6 @@ async function generatePDF(
             .moveDown(0.5)
             .text(`Lowest Heart Rate: ${lowestHr} BPM on ${lowestHrDate}`, { align: "left" })
             .moveDown(1.5);
-
         const heartRateChartImage = await generateHeartRateChart(
             heartRateData.logs,
             heartRateData.benchMark,
@@ -1289,31 +933,21 @@ async function generatePDF(
 
         doc.moveDown(100);
 
-        // -------------------------
-        // BLOOD PRESSURE SECTION (NEW)
-        // -------------------------
-        // Only add if `bloodPressureData` is provided
+        // BLOOD PRESSURE SECTION
         if (bloodPressureData) {
             doc.fontSize(16)
                 .text(`Blood Pressure (Last ${timeframeDays} days)`, { align: "center" })
                 .moveDown();
-
-            // Extract arrays for systolic & diastolic
             const allSysValues = bloodPressureData.logs.map(log => log.systolic);
             const allDiaValues = bloodPressureData.logs.map(log => log.diastolic);
-
-            // Current values from top-level object
             const currentSys = bloodPressureData.systolic || "-";
             const currentDia = bloodPressureData.diastolic || "-";
-
             const averageSys = allSysValues.length
                 ? (allSysValues.reduce((sum, v) => sum + v, 0) / allSysValues.length).toFixed(2)
                 : "-";
             const averageDia = allDiaValues.length
                 ? (allDiaValues.reduce((sum, v) => sum + v, 0) / allDiaValues.length).toFixed(2)
                 : "-";
-
-            // Lowest systolic
             const lowestSysLog = allSysValues.length
                 ? bloodPressureData.logs.reduce((min, log) => (log.systolic < min.systolic ? log : min))
                 : null;
@@ -1321,8 +955,6 @@ async function generatePDF(
             const lowestSysDate = lowestSysLog
                 ? moment(lowestSysLog.measurementDate).tz(TIMEZONE).format("DD MMM YYYY")
                 : "-";
-
-            // Lowest diastolic
             const lowestDiaLog = allDiaValues.length
                 ? bloodPressureData.logs.reduce((min, log) => (log.diastolic < min.diastolic ? log : min))
                 : null;
@@ -1330,7 +962,6 @@ async function generatePDF(
             const lowestDiaDate = lowestDiaLog
                 ? moment(lowestDiaLog.measurementDate).tz(TIMEZONE).format("DD MMM YYYY")
                 : "-";
-
             doc.fontSize(12)
                 .text(`Current BP: ${currentSys}/${currentDia} mmHg`, { align: "left" })
                 .moveDown(0.5)
@@ -1340,8 +971,6 @@ async function generatePDF(
                 .moveDown(0.5)
                 .text(`Lowest Diastolic: ${lowestDia} mmHg on ${lowestDiaDate}`, { align: "left" })
                 .moveDown(1.5);
-
-            // Render & embed the blood pressure chart
             const bloodPressureChartImage = await generateBloodPressureChart(
                 bloodPressureData.logs,
                 bloodPressureData.benchMark,
@@ -1358,20 +987,16 @@ async function generatePDF(
         doc.moveDown(100);
 
         if (bloodGlucoseData) {
-            doc.addPage(); // optional: start a fresh page if desired
-
+            doc.addPage();
             doc.fontSize(16)
                 .text(`Blood Glucose (Last ${timeframeDays} days)`, { align: "center" })
                 .moveDown();
-
-            // Prepare summary stats
             const allBgValues = bloodGlucoseData.logs.map(log => log.value);
             const currentBg = bloodGlucoseData.value || "-";
             const currentCategory = bloodGlucoseData.category || "-";
             const averageBg = allBgValues.length
                 ? (allBgValues.reduce((sum, v) => sum + v, 0) / allBgValues.length).toFixed(2)
                 : "-";
-
             const lowestBgLog = allBgValues.length
                 ? bloodGlucoseData.logs.reduce((min, log) => (log.value < min.value ? log : min))
                 : null;
@@ -1379,7 +1004,6 @@ async function generatePDF(
             const lowestBgDate = lowestBgLog
                 ? moment(lowestBgLog.measurementDate).tz(TIMEZONE).format("DD MMM YYYY")
                 : "-";
-
             doc.fontSize(12)
                 .text(`Current Glucose: ${currentBg} mg/dL (Category: ${currentCategory})`, { align: "left" })
                 .moveDown(0.5)
@@ -1387,8 +1011,6 @@ async function generatePDF(
                 .moveDown(0.5)
                 .text(`Lowest Glucose: ${lowestBg} mg/dL on ${lowestBgDate}`, { align: "left" })
                 .moveDown(1.5);
-
-            // Render the new Blood Glucose chart
             const bloodGlucoseChartImage = await generateBloodGlucoseChart(
                 bloodGlucoseData.logs,
                 bloodGlucoseData.benchMark,
@@ -1405,17 +1027,12 @@ async function generatePDF(
         doc.moveDown(100);
 
         if (nutritionData) {
-            doc.addPage(); // optional new page if needed
-
+            doc.addPage();
             doc.fontSize(16)
                 .text(`Nutrition (Last ${timeframeDays} days)`, { align: "center" })
                 .moveDown();
-
-            // We can show summary stats (goalAverage, actualAverage, etc.)
             const goalAvg = nutritionData.goalAverage?.toFixed(2) || "-";
             const actualAvg = nutritionData.actualAverage?.toFixed(2) || "-";
-
-            // Find lowest consumption
             const allConsumed = nutritionData.logs.map(log => log.consumed);
             const lowestLog = allConsumed.length
                 ? nutritionData.logs.reduce((min, log) => (log.consumed < min.consumed ? log : min))
@@ -1424,7 +1041,6 @@ async function generatePDF(
             const lowestConsumedDate = lowestLog
                 ? moment(lowestLog.createdAt).tz(TIMEZONE).format("DD MMM YYYY")
                 : "-";
-
             doc.fontSize(12)
                 .text(`Goal Average: ${goalAvg} ${nutritionData.unit}`, { align: "left" })
                 .moveDown(0.5)
@@ -1432,8 +1048,6 @@ async function generatePDF(
                 .moveDown(0.5)
                 .text(`Lowest Consumption: ${lowestConsumed} ${nutritionData.unit} on ${lowestConsumedDate}`, { align: "left" })
                 .moveDown(1.5);
-
-            // Generate & embed the nutrition chart
             const nutritionChartImage = await generateNutritionChart(nutritionData, timeframeDays);
             doc.image(nutritionChartImage, {
                 width: 550,
@@ -1446,23 +1060,17 @@ async function generatePDF(
         doc.moveDown(100);
 
         if (hydrateData) {
-            doc.addPage(); // optional if you want a fresh page
-
+            doc.addPage();
             doc.fontSize(16)
                 .text(`Water Intake (Last ${timeframeDays} days)`, { align: "center" })
                 .moveDown();
-
-            // Summaries
             const goalAvg = hydrateData.goalAverage?.toFixed(2) || "-";
             const actualAvg = hydrateData.actualAverage?.toFixed(2) || "-";
-
             doc.fontSize(12)
                 .text(`Goal Average: ${goalAvg} ${hydrateData.unit}`, { align: "left" })
                 .moveDown(0.5)
                 .text(`Actual Average: ${actualAvg} ${hydrateData.unit}`, { align: "left" })
                 .moveDown(1);
-
-            // Render stacked bar chart
             const hydrationStackedChart = await generateHydrationStackedChart(hydrateData, timeframeDays);
             doc.image(hydrationStackedChart, {
                 width: 550,
@@ -1475,18 +1083,13 @@ async function generatePDF(
         doc.moveDown(100);
 
         if (weightData) {
-            doc.addPage(); // optional if you want a new page for weight
-
+            doc.addPage();
             doc.fontSize(16)
                 .text(`Weight (Last ${timeframeDays} days)`, { align: "center" })
                 .moveDown();
-
-            // Current weight in lbs
             const currentWeightLbs = weightData.currentWeight
                 ? (weightData.currentWeight * 2.20462).toFixed(2)
                 : "-";
-
-            // Find the lowest weight from logs
             const allValues = weightData.logs.map(log => log.value);
             const lowestLog = allValues.length
                 ? weightData.logs.reduce((min, log) => (log.value < min.value ? log : min))
@@ -1498,14 +1101,11 @@ async function generatePDF(
             const lowestWeightLbs = lowestLog
                 ? (lowestWeightKg * 2.20462).toFixed(2)
                 : "-";
-
             doc.fontSize(12)
                 .text(`Current Weight: ${currentWeightLbs} lbs`, { align: "left" })
                 .moveDown(0.5)
                 .text(`Lowest Weight: ${lowestWeightLbs} lbs on ${lowestWeightDate}`, { align: "left" })
                 .moveDown(1.5);
-
-            // Generate & embed the weight chart
             const weightChartImage = await generateWeightChart(weightData, timeframeDays);
             doc.image(weightChartImage, {
                 width: 550,
@@ -1517,23 +1117,17 @@ async function generatePDF(
 
         doc.moveDown(100);
         if (activityData) {
-            doc.addPage(); // optional if you want a fresh page
-
+            doc.addPage();
             doc.fontSize(16)
                 .text(`Activity (Last ${timeframeDays} days)`, { align: "center" })
                 .moveDown();
-
-            // Summaries
             const goalCal = activityData.calories?.toFixed(2) || "-";
             const achievedCal = activityData.caloriesBurnt?.toFixed(2) || "-";
-
             doc.fontSize(12)
                 .text(`Goal: ${goalCal} ${activityData.unit}`, { align: "left" })
                 .moveDown(0.5)
                 .text(`Current Achieved: ${achievedCal} ${activityData.unit}`, { align: "left" })
                 .moveDown(1);
-
-            // Generate & embed the activity chart
             const activityChartImage = await generateActivityChart(activityData, timeframeDays);
             doc.image(activityChartImage, {
                 width: 550,
@@ -1545,23 +1139,17 @@ async function generatePDF(
 
         doc.moveDown(100);
         if (stepData) {
-            doc.addPage(); // optional if you want a fresh page
-
+            doc.addPage();
             doc.fontSize(16)
                 .text(`Step Count (Last ${timeframeDays} days)`, { align: "center" })
                 .moveDown();
-
-            // Summaries
             const goalAvg = stepData.goalAverage?.toFixed(2) || "-";
             const actualAvg = stepData.actualAverage?.toFixed(2) || "-";
-
             doc.fontSize(12)
                 .text(`Goal: ${goalAvg} ${stepData.unit} - Garmin Connect`, { align: "left" })
                 .moveDown(0.5)
                 .text(`Actual Average: ${actualAvg} ${stepData.unit}`, { align: "left" })
                 .moveDown(1);
-
-            // Generate & embed the step count chart
             const stepChartImage = await generateStepCountChart(stepData, timeframeDays);
             doc.image(stepChartImage, {
                 width: 550,
@@ -1571,30 +1159,20 @@ async function generatePDF(
             }).moveDown(3);
         }
 
-        doc.moveDown(100)
-
+        doc.moveDown(100);
         if (medicationData) {
-            doc.addPage(); // optional if you want a new page
-
+            doc.addPage();
             doc.fontSize(16)
                 .text(`Medication (Last ${timeframeDays} days)`, { align: "center" })
                 .moveDown();
-
-            // If you want to show "goalAverage" or "actualAverage" from medicationData:
             const goalAvg = medicationData.goalAverage?.toFixed(2) || "-";
             const actualAvg = medicationData.actualAverage?.toFixed(2) || "-";
-
             doc.fontSize(12)
                 .text(`Goal Average: ${goalAvg} ${medicationData.unit}`, { align: "left" })
                 .moveDown(0.5)
                 .text(`Actual Average: ${actualAvg} ${medicationData.unit}`, { align: "left" })
                 .moveDown(1);
-
-            // Generate & embed the stacked bar chart
-            const medicationChart = await generateMedicationStackedChart(
-                medicationData,
-                timeframeDays
-            );
+            const medicationChart = await generateMedicationStackedChart(medicationData, timeframeDays);
             doc.image(medicationChart, {
                 width: 550,
                 align: "center",
@@ -1603,16 +1181,11 @@ async function generatePDF(
             }).moveDown(3);
         }
 
-        doc.moveDown(100)
-
-        // *** ADD SURVEYS NEAR THE END *** //
+        // SURVEYS SECTION
         if (surveyData && surveyData.length) {
             generateSurveysSection(doc, surveyData);
         }
 
-
-        //doc.moveDown(100)
-        // End & save PDF
         doc.end();
         stream.on("finish", () => {
             console.log("PDF generated successfully:", pdfPath);
@@ -1621,6 +1194,9 @@ async function generatePDF(
         console.error("Error generating PDF:", error);
     }
 }
+
+// Example usage (make sure to pass your surveyData array as well):
+
 
 
 const heartRateData = {
