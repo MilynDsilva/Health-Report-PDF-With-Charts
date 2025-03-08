@@ -252,6 +252,152 @@ function generateSurveysSection(doc, surveyData) {
     });
 }
 
+function generateNutritionAssessmentsSection(doc, assessmentsData) {
+    // Start a new page for Nutrition Assessments
+    doc.addPage();
+    doc.font("Helvetica-Bold").fontSize(16)
+        .text("Nutrition Assessments", { align: "center" })
+        .moveDown(1);
+
+    // Helper functions for consistent fonts
+    function setQuestionFont() {
+        doc.font("Helvetica-Bold").fontSize(12);
+    }
+    function setAnswerFont() {
+        doc.font("Helvetica").fontSize(12);
+    }
+
+    // Helper: join answer values and append unit if question mentions "weight" or "height"
+    function getAnswerText(q) {
+        if (!q.value || !q.value.length) return "(No answer given)";
+        const nonEmpty = q.value.filter(ans => String(ans).trim() !== "");
+        if (!nonEmpty.length) return "(No answer given)";
+        const questionText = (q.question || "").toLowerCase();
+        const appendedAnswers = nonEmpty.map(ans => {
+            const trimmed = String(ans).trim();
+            const isNumeric = /^[0-9]+(\.[0-9]+)?$/.test(trimmed);
+            if (isNumeric && q.unit) {
+                if (questionText.includes("weight") || questionText.includes("height")) {
+                    return `${trimmed} ${q.unit}`;
+                }
+            }
+            return trimmed;
+        });
+        return appendedAnswers.join(", ");
+    }
+
+    if (!Array.isArray(assessmentsData) || assessmentsData.length === 0) {
+        doc.font("Helvetica").fontSize(12)
+            .text("No nutrition assessments found.", { align: "left" });
+        return;
+    }
+
+    // Loop over each nutrition assessment object
+    assessmentsData.forEach((assessmentObj, index) => {
+        if (index > 0) {
+            doc.moveDown(2);
+        }
+        const createdDateStr = assessmentObj.createdAt
+            ? moment(assessmentObj.createdAt).tz(TIMEZONE).format("DD MMM YYYY")
+            : "No Date";
+        // Header for this assessment
+        doc.font("Helvetica-Bold").fontSize(14)
+            .text(`Nutrition Assessment #${index + 1} (${createdDateStr})`, { align: "left" })
+            .moveDown(0.5);
+
+        // Loop over each user assessment log in this nutrition assessment
+        if (Array.isArray(assessmentObj.userAssessmentLog)) {
+            assessmentObj.userAssessmentLog.forEach((log, logIndex) => {
+                doc.font("Helvetica-Bold").fontSize(12)
+                    .text(`Sub-Assessment #${logIndex + 1}: ${log.assessmentType || ""}`, { align: "left" })
+                    .moveDown(0.25);
+                doc.font("Helvetica").fontSize(12)
+                    .text(`Risk Level: ${log.riskLevel || "N/A"}`, { align: "left" })
+                    .moveDown(0.25);
+                if (log.score !== undefined) {
+                    doc.text(`Score: ${log.score}`, { align: "left" })
+                        .moveDown(0.5);
+                }
+
+                // Iterate over each assessment question
+                if (Array.isArray(log.assessment)) {
+                    log.assessment.forEach((q, qIndex) => {
+                        setQuestionFont();
+                        doc.text(`${qIndex + 1}) ${q.question}`, { align: "left" })
+                            .moveDown(0.25);
+                        // If the question has subQuestions, iterate through them
+                        if (q.questionType === "SUB" && Array.isArray(q.subQuestions)) {
+                            q.subQuestions.forEach((subq, subIndex) => {
+                                setQuestionFont();
+                                doc.text(`   ${subIndex + 1}) ${subq.question}`, { align: "left" })
+                                    .moveDown(0.25);
+                                setAnswerFont();
+                                const subAnswer = (subq.value && subq.value.length) ? subq.value.join(", ") : "(No answer given)";
+                                doc.text(`Answer: ${subAnswer}`, { align: "left" })
+                                    .moveDown(0.5);
+                            });
+                        } else {
+                            setAnswerFont();
+                            const answerText = getAnswerText(q);
+                            if (q.questionType === "scale_rating") {
+                                doc.text(`Rating: ${answerText}`, { align: "left" })
+                                    .moveDown(0.5);
+                            } else {
+                                doc.text(`Answer: ${answerText}`, { align: "left" })
+                                    .moveDown(0.5);
+                            }
+                        }
+                    });
+                }
+            });
+        }
+    });
+}
+
+function generatePatientNotesSection(doc, notesData) {
+    // Start a new page for Patient Notes
+    doc.addPage();
+    doc.font("Helvetica-Bold").fontSize(16)
+        .text("Patient Notes", { align: "center" })
+        .moveDown(1);
+
+    // Loop over each note in the array
+    notesData.forEach((note, index) => {
+        if (index > 0) {
+            // Extra spacing between notes
+            doc.moveDown(2);
+        }
+        // Title (bold)
+        doc.font("Helvetica-Bold").fontSize(14)
+            .text(`Title: ${note.title}`, { align: "left" })
+            .moveDown(0.5);
+
+        // Description (regular font)
+        doc.font("Helvetica").fontSize(12)
+            .text(note.description, { align: "left" })
+            .moveDown(0.5);
+
+        // If imageId exists and is not empty, show "Attachment available"
+        if (note.imageId && note.imageId.trim().length > 0) {
+            doc.font("Helvetica-Oblique").fontSize(12)
+                .text("Attachment available", { align: "left" })
+                .moveDown(0.5);
+        }
+
+        // Show created date (if available)
+        const createdStr = note.createdAt
+            ? moment(note.createdAt).tz(TIMEZONE).format("DD MMM YYYY")
+            : "";
+        if (createdStr) {
+            doc.font("Helvetica").fontSize(10)
+                .text(`Created on: ${createdStr}`, { align: "left" })
+                .moveDown(1);
+        } else {
+            doc.moveDown(1);
+        }
+    });
+}
+
 function addHeaderFooterAbsolute(doc, patientInfo) {
     doc.save();
 
@@ -278,7 +424,7 @@ function addHeaderFooterAbsolute(doc, patientInfo) {
     doc.font("Helvetica").fontSize(8)
         .text("© 2025 Restore Me. All Rights Reserved.",
             doc.page.margins.left,
-            doc.page.height - doc.page.margins.bottom - 20,
+            doc.page.height - doc.page.margins.bottom - 10,
             {
                 width: doc.page.width - doc.page.margins.left - doc.page.margins.right,
                 align: "center",
@@ -1184,6 +1330,14 @@ async function generatePDF(
         // SURVEYS SECTION
         if (surveyData && surveyData.length) {
             generateSurveysSection(doc, surveyData);
+        }
+
+        if (nutritionAssessmentData && nutritionAssessmentData.length) {
+            generateNutritionAssessmentsSection(doc, nutritionAssessmentData);
+        }
+
+        if (patientNotesData && patientNotesData.length) {
+            generatePatientNotesSection(doc, patientNotesData);
         }
 
         doc.end();
@@ -7941,6 +8095,1213 @@ const surveyData = [
     }
 ]
 
+const nutritionAssessmentData = [
+    {
+        "_id": {
+            "$oid": "66f3e8dd2ff09c0a7ec54460"
+        },
+        "allAssessmentLogsCompleted": true,
+        "medicalProfileId": "65c1afe2f2be19895414d435",
+        "createdAt": 1727260893743,
+        "isProviderAssessmentAvailable": false,
+        "updatedAt": 1727260910827,
+        "userAssessmentLog": [
+            {
+                "assessment": [
+                    {
+                        "assessmentQuestionId": "6684fc29a699fc2f440ad363",
+                        "assessmentSubType": "GENERAL",
+                        "assessmentType": "SCREENING",
+                        "computationKey": "BMI",
+                        "createdAt": 1719991337416,
+                        "hiddenFromUI": false,
+                        "question": "What is your current weight",
+                        "questionId": 1,
+                        "questionType": "CURRENT_WEIGHT",
+                        "type": "number",
+                        "unit": "kg",
+                        "updatedAt": 1719991337416,
+                        "userType": "PATIENT",
+                        "value": [
+                            "80.0"
+                        ]
+                    },
+                    {
+                        "assessmentQuestionId": "6684fc29a699fc2f440ad364",
+                        "assessmentSubType": "GENERAL",
+                        "assessmentType": "SCREENING",
+                        "computationKey": "BMI",
+                        "createdAt": 1719991337416,
+                        "hiddenFromUI": false,
+                        "question": "What is your height",
+                        "questionId": 2,
+                        "questionType": "CURRENT_HEIGHT",
+                        "type": "number",
+                        "unit": "cm",
+                        "updatedAt": 1719991337416,
+                        "userType": "PATIENT",
+                        "value": [
+                            "178.00"
+                        ]
+                    },
+                    {
+                        "assessmentQuestionId": "6684fc29a699fc2f440ad365",
+                        "assessmentSubType": "GENERAL",
+                        "assessmentType": "SCREENING",
+                        "computationKey": "WL",
+                        "createdAt": 1719991337416,
+                        "hiddenFromUI": true,
+                        "question": "What was your weight 6 months ago?",
+                        "questionId": 3,
+                        "questionType": "WEIGHT_SIX_MONTHS_AGO",
+                        "type": "number",
+                        "unit": "kg",
+                        "updatedAt": 1719991337416,
+                        "userType": "PATIENT",
+                        "value": [
+                            100
+                        ]
+                    },
+                    {
+                        "assessmentQuestionId": "6684fc29a699fc2f440ad366",
+                        "assessmentSubType": "GENERAL",
+                        "assessmentType": "SCREENING",
+                        "computationKey": "MAP",
+                        "createdAt": 1719991337416,
+                        "hiddenFromUI": false,
+                        "mappedOptions": {
+                            "YES": 2,
+                            "NO": 0
+                        },
+                        "optionsList": [
+                            "YES",
+                            "NO"
+                        ],
+                        "question": "Are you hospitalized and critically ill and/or have been 5 days or more without ingesting regular foods and beverages?",
+                        "questionId": 4,
+                        "questionType": "MCQ",
+                        "type": "string",
+                        "unit": "",
+                        "updatedAt": 1719991337416,
+                        "userType": "PATIENT",
+                        "value": [
+                            "YES"
+                        ]
+                    }
+                ],
+                "assessmentType": "SCREENING",
+                "riskLevel": "High risk",
+                "score": 4
+            },
+            {
+                "assessment": [
+                    {
+                        "assessmentQuestionId": "6684fc29a699fc2f440ad367",
+                        "assessmentSubType": "GENERAL",
+                        "assessmentType": "PG-SGA",
+                        "computationKey": "BMI",
+                        "createdAt": 1719991337416,
+                        "hiddenFromUI": false,
+                        "question": "My current weight is",
+                        "questionId": 1,
+                        "questionType": "CURRENT_WEIGHT",
+                        "type": "number",
+                        "unit": "kg",
+                        "updatedAt": 1719991337416,
+                        "userType": "PATIENT",
+                        "value": [
+                            "80.0"
+                        ]
+                    },
+                    {
+                        "assessmentQuestionId": "6684fc29a699fc2f440ad368",
+                        "assessmentSubType": "GENERAL",
+                        "assessmentType": "PG-SGA",
+                        "computationKey": "BMI",
+                        "createdAt": 1719991337416,
+                        "hiddenFromUI": false,
+                        "question": "My height is",
+                        "questionId": 2,
+                        "questionType": "CURRENT_HEIGHT",
+                        "type": "number",
+                        "unit": "cm",
+                        "updatedAt": 1719991337416,
+                        "userType": "PATIENT",
+                        "value": [
+                            "178.00"
+                        ]
+                    },
+                    {
+                        "assessmentQuestionId": "6684fc29a699fc2f440ad369",
+                        "assessmentSubType": "HEIGHT_WEIGHT",
+                        "assessmentType": "PG-SGA",
+                        "computationKey": "WL",
+                        "createdAt": 1719991337416,
+                        "hiddenFromUI": true,
+                        "question": "1 month ago I weighted about",
+                        "questionId": 1,
+                        "questionType": "WEIGHT_ONE_MONTH_AGO",
+                        "type": "number",
+                        "unit": "kg",
+                        "updatedAt": 1719991337416,
+                        "userType": "PATIENT",
+                        "value": [
+                            81
+                        ]
+                    },
+                    {
+                        "assessmentQuestionId": "6684fc29a699fc2f440ad36a",
+                        "assessmentSubType": "GENERAL",
+                        "assessmentType": "PG-SGA",
+                        "computationKey": "WL",
+                        "createdAt": 1719991337416,
+                        "hiddenFromUI": true,
+                        "question": "What was your weight 6 months ago?",
+                        "questionId": 2,
+                        "questionType": "WEIGHT_SIX_MONTHS_AGO",
+                        "type": "number",
+                        "unit": "kg",
+                        "updatedAt": 1719991337416,
+                        "userType": "PATIENT",
+                        "value": [
+                            100
+                        ]
+                    },
+                    {
+                        "assessmentQuestionId": "6684fc29a699fc2f440ad36b",
+                        "assessmentSubType": "HEIGHT_WEIGHT",
+                        "assessmentType": "PG-SGA",
+                        "computationKey": "MAP",
+                        "createdAt": 1719991337416,
+                        "hiddenFromUI": false,
+                        "mappedOptions": {
+                            "DECREASED": 1,
+                            "INCREASED": 0,
+                            "NOT CHANGED": 0
+                        },
+                        "optionsList": [
+                            "DECREASED",
+                            "INCREASED",
+                            "NOT CHANGED"
+                        ],
+                        "question": "During the past 2 weeks my weight has",
+                        "questionId": 2,
+                        "questionType": "MCQ",
+                        "type": "string",
+                        "unit": "kg",
+                        "updatedAt": 1719991337416,
+                        "userType": "PATIENT",
+                        "value": [
+                            "DECREASED"
+                        ]
+                    },
+                    {
+                        "assessmentQuestionId": "6684fc29a699fc2f440ad36c",
+                        "assessmentSubType": "FOOD_INTAKE",
+                        "assessmentType": "PG-SGA",
+                        "computationKey": "MAP",
+                        "createdAt": 1719991337416,
+                        "hiddenFromUI": false,
+                        "mappedOptions": {
+                            "LESS THAN USUAL": 1,
+                            "MORE THAN USUAL": 0,
+                            "NOT CHANGED": 0
+                        },
+                        "optionsList": [
+                            "LESS THAN USUAL",
+                            "MORE THAN USUAL",
+                            "NOT CHANGED"
+                        ],
+                        "question": "As compared to my normal intake, I would rate my food intake during the past month as",
+                        "questionId": 1,
+                        "questionType": "MCQ",
+                        "type": "string",
+                        "unit": "",
+                        "updatedAt": 1719991337416,
+                        "userType": "PATIENT",
+                        "value": [
+                            "LESS THAN USUAL"
+                        ]
+                    },
+                    {
+                        "assessmentQuestionId": "6684fc29a699fc2f440ad36d",
+                        "assessmentSubType": "FOOD_INTAKE",
+                        "assessmentType": "PG-SGA",
+                        "computationKey": "MAP",
+                        "createdAt": 1719991337416,
+                        "hiddenFromUI": false,
+                        "mappedOptions": {
+                            "NORMAL FOOD BUT IN LESS THAN NORMAL AMOUNT": 1,
+                            "LITTLE SOLID FOOD": 2,
+                            "ONLY LIQUIDS": 3,
+                            "ONLY NUTRITIONAL SUPPLEMENTS": 3,
+                            "VERY LITTLE OF ANYTHING": 4,
+                            "ONLY TUBE FEEDING OR NUTRITION BY VEIN": 0,
+                            "NONE": 0
+                        },
+                        "optionsList": [
+                            "NORMAL FOOD BUT IN LESS THAN NORMAL AMOUNT",
+                            "LITTLE SOLID FOOD",
+                            "ONLY LIQUIDS",
+                            "ONLY NUTRITIONAL SUPPLEMENTS",
+                            "VERY LITTLE OF ANYTHING",
+                            "ONLY TUBE FEEDING OR NUTRITION BY VEIN",
+                            "NONE"
+                        ],
+                        "question": "I am now taking",
+                        "questionId": 1,
+                        "questionType": "MCQ",
+                        "type": "string",
+                        "unit": "",
+                        "updatedAt": 1719991337416,
+                        "userType": "PATIENT",
+                        "value": [
+                            "ONLY LIQUIDS"
+                        ]
+                    },
+                    {
+                        "assessmentQuestionId": "6684fc29a699fc2f440ad36e",
+                        "assessmentSubType": "SYMPTOMS",
+                        "assessmentType": "PG-SGA",
+                        "computationKey": "MAP",
+                        "createdAt": 1719991337416,
+                        "hiddenFromUI": false,
+                        "mappedOptions": {
+                            "NO PROBLEMS EATING": 0,
+                            "NO APPETITE": 3,
+                            "NAUSEA": 1,
+                            "CONSTIPATION": 1,
+                            "MOUTH SORES": 2,
+                            "THINGS TASTE FUNNY OR HAVE NO TASTE": 1,
+                            "PROBLEM SWALLOWING": 2,
+                            "PAIN": 3,
+                            "VOMITING": 3,
+                            "DIARRHEA": 3,
+                            "DRY MOUTH": 1,
+                            "SMELLS BOTHER ME": 1,
+                            "FEEL FULL QUICKLY": 1,
+                            "FATIGUE": 1,
+                            "OTHER": 1
+                        },
+                        "optionsList": [
+                            "NO PROBLEMS EATING",
+                            "NO APPETITE",
+                            "NAUSEA",
+                            "CONSTIPATION",
+                            "MOUTH SORES",
+                            "THINGS TASTE FUNNY OR HAVE NO TASTE",
+                            "PROBLEM SWALLOWING",
+                            "PAIN",
+                            "VOMITING",
+                            "DIARRHEA",
+                            "DRY MOUTH",
+                            "SMELLS BOTHER ME",
+                            "FEEL FULL QUICKLY",
+                            "FATIGUE",
+                            "OTHER"
+                        ],
+                        "question": "I have had the following problems that have kept me from eating enough during the past 2 weeks",
+                        "questionId": 1,
+                        "questionType": "MSQ",
+                        "type": "string",
+                        "unit": "",
+                        "updatedAt": 1719991337416,
+                        "userType": "PATIENT",
+                        "value": [
+                            "NO APPETITE"
+                        ]
+                    },
+                    {
+                        "assessmentQuestionId": "6684fc29a699fc2f440ad36f",
+                        "assessmentSubType": "ACTIVITIES_AND_FUNCTION",
+                        "assessmentType": "PG-SGA",
+                        "computationKey": "MAP",
+                        "createdAt": 1719991337416,
+                        "hiddenFromUI": false,
+                        "mappedOptions": {
+                            "NORMAL WITH NO LIMITATIONS": 0,
+                            "NOT MY NORMAL SELF BUT ABLE TO KEEP UP MOST OF NORMAL ACTIVITIES": 1,
+                            "NOT FEELING UP TO MOST THINGS": 2,
+                            "ABLE TO DO LITTLE THINGS OR SPEND MOST OF ALL DAY IN BED OR CHAIR": 3
+                        },
+                        "optionsList": [
+                            "NORMAL WITH NO LIMITATIONS",
+                            "NOT MY NORMAL SELF BUT ABLE TO KEEP UP MOST OF NORMAL ACTIVITIES",
+                            "NOT FEELING UP TO MOST THINGS",
+                            "ABLE TO DO LITTLE THINGS OR SPEND MOST OF ALL DAY IN BED OR CHAIR"
+                        ],
+                        "question": "Over the past month I would generally rate my activity as",
+                        "questionId": 1,
+                        "questionType": "MCQ",
+                        "type": "string",
+                        "unit": "",
+                        "updatedAt": 1719991337416,
+                        "userType": "PATIENT",
+                        "value": [
+                            "NOT FEELING UP TO MOST THINGS"
+                        ]
+                    },
+                    {
+                        "_id": "6684fc29a699fc2f440ad370",
+                        "assessmentType": "PG-SGA",
+                        "assessmentSubType": "DISEASES",
+                        "questionType": "MSQ",
+                        "userType": "PROVIDER",
+                        "questionId": 1,
+                        "question": "Do the patient has any of the conditions below? Check all that apply",
+                        "optionsList": [
+                            "CANCER",
+                            "AIDS",
+                            "PULMONARY OR CARDIAC CACHEXIA",
+                            "CHRONIC RENAL INSUFFICIENCY",
+                            "PRESENCE OF DECUBITUS OPEN WOUND OR FISTULA",
+                            "PRESENCE OF TRAUMA",
+                            "AGE OVER 65 YEARS OLD"
+                        ],
+                        "type": "string",
+                        "computationKey": "MAP",
+                        "unit": "",
+                        "createdAt": 1719991337416,
+                        "updatedAt": 1719991337416,
+                        "hiddenFromUI": false,
+                        "value": [
+                            "CANCER"
+                        ],
+                        "assessmentQuestionId": "6684fc29a699fc2f440ad370"
+                    },
+                    {
+                        "_id": "6684fc29a699fc2f440ad371",
+                        "assessmentType": "PG-SGA",
+                        "assessmentSubType": "METABOLIC-EXTRA-DEMAND",
+                        "questionType": "MCQ",
+                        "userType": "PROVIDER",
+                        "questionId": 1,
+                        "question": "Fever",
+                        "optionsList": [
+                            "NO FEVER",
+                            "> 37.2 and < 38.3",
+                            ">= 38.3 and < 38.8",
+                            ">=38.8"
+                        ],
+                        "type": "string",
+                        "computationKey": "NONE",
+                        "unit": "",
+                        "createdAt": 1719991337416,
+                        "updatedAt": 1719991337416,
+                        "hiddenFromUI": false,
+                        "value": [
+                            "NO FEVER"
+                        ],
+                        "assessmentQuestionId": "6684fc29a699fc2f440ad371"
+                    },
+                    {
+                        "_id": "668a8fc8e128c4369c9e9fa5",
+                        "assessmentType": "PG-SGA",
+                        "assessmentSubType": "PHYSICAL-EXAM",
+                        "questionType": "SUB",
+                        "userType": "PROVIDER",
+                        "questionId": 1,
+                        "question": "Muscle Mass",
+                        "subQuestions": [
+                            {
+                                "_id": "550e8400-e29b-41d4-a716-446655440000",
+                                "question": "temples (temporalis muscle)",
+                                "optionsList": [
+                                    "0",
+                                    "1+",
+                                    "2+",
+                                    "3+"
+                                ],
+                                "questionType": "MCQ",
+                                "isGlobal": false,
+                                "value": [
+                                    "0"
+                                ],
+                                "assessmentQuestionId": "550e8400-e29b-41d4-a716-446655440000"
+                            },
+                            {
+                                "_id": "123e4567-e89b-12d3-a456-426614174000",
+                                "question": "clavicles (pectoralis & deltoids)",
+                                "optionsList": [
+                                    "0",
+                                    "1+",
+                                    "2+",
+                                    "3+"
+                                ],
+                                "questionType": "MCQ",
+                                "isGlobal": false,
+                                "value": [
+                                    "0"
+                                ],
+                                "assessmentQuestionId": "123e4567-e89b-12d3-a456-426614174000"
+                            },
+                            {
+                                "_id": "e1e7a2f0-9c5c-45e7-bc58-66c95a82d8d4",
+                                "question": "shoulders (deltoids)",
+                                "optionsList": [
+                                    "0",
+                                    "1+",
+                                    "2+",
+                                    "3+"
+                                ],
+                                "questionType": "MCQ",
+                                "isGlobal": false,
+                                "value": [
+                                    "0"
+                                ],
+                                "assessmentQuestionId": "e1e7a2f0-9c5c-45e7-bc58-66c95a82d8d4"
+                            },
+                            {
+                                "_id": "d4e3f490-75a3-11eb-9439-0242ac130002",
+                                "question": "interosseous muscles",
+                                "optionsList": [
+                                    "0",
+                                    "1+",
+                                    "2+",
+                                    "3+"
+                                ],
+                                "questionType": "MCQ",
+                                "isGlobal": false,
+                                "value": [
+                                    "0"
+                                ],
+                                "assessmentQuestionId": "d4e3f490-75a3-11eb-9439-0242ac130002"
+                            },
+                            {
+                                "_id": "c4d5fbb5-984d-4ea5-99d1-5f6d2c3c5f4a",
+                                "question": "scapula (latissimus dorsi, trapezius, deltoids)",
+                                "optionsList": [
+                                    "0",
+                                    "1+",
+                                    "2+",
+                                    "3+"
+                                ],
+                                "questionType": "MCQ",
+                                "isGlobal": false,
+                                "value": [
+                                    "0"
+                                ],
+                                "assessmentQuestionId": "c4d5fbb5-984d-4ea5-99d1-5f6d2c3c5f4a"
+                            },
+                            {
+                                "_id": "e1e7o2f0-5c5c-44e7-kc58-66c95a82d8d4",
+                                "question": "thigh (quadriceps)",
+                                "optionsList": [
+                                    "0",
+                                    "1+",
+                                    "2+",
+                                    "3+"
+                                ],
+                                "questionType": "MCQ",
+                                "isGlobal": false,
+                                "value": [
+                                    "0"
+                                ],
+                                "assessmentQuestionId": "e1e7o2f0-5c5c-44e7-kc58-66c95a82d8d4"
+                            },
+                            {
+                                "_id": "e2e3aab9-2d8a-4ff5-9b5b-32c7aeb21b6f",
+                                "question": "calf (gastrocnemius)",
+                                "optionsList": [
+                                    "0",
+                                    "1+",
+                                    "2+",
+                                    "3+"
+                                ],
+                                "questionType": "MCQ",
+                                "isGlobal": false,
+                                "value": [
+                                    "0"
+                                ],
+                                "assessmentQuestionId": "e2e3aab9-2d8a-4ff5-9b5b-32c7aeb21b6f"
+                            },
+                            {
+                                "_id": "b57525e3-63a2-4c8e-938e-1e1cb93c847d",
+                                "question": "Global muscle status rating",
+                                "optionsList": [
+                                    "0",
+                                    "1+",
+                                    "2+",
+                                    "3+"
+                                ],
+                                "questionType": "MCQ",
+                                "isGlobal": true,
+                                "value": [
+                                    "0"
+                                ],
+                                "assessmentQuestionId": "b57525e3-63a2-4c8e-938e-1e1cb93c847d"
+                            }
+                        ],
+                        "optionsList": [],
+                        "type": "number",
+                        "computationKey": "SUBTYPE-SUM",
+                        "unit": "",
+                        "createdAt": 1720356808890,
+                        "updatedAt": 1720356808890,
+                        "hiddenFromUI": false,
+                        "assessmentQuestionId": "668a8fc8e128c4369c9e9fa5"
+                    },
+                    {
+                        "_id": "668a8fc8e128c4369c9e9fa6",
+                        "assessmentType": "PG-SGA",
+                        "assessmentSubType": "PHYSICAL-EXAM",
+                        "questionType": "SUB",
+                        "userType": "PROVIDER",
+                        "questionId": 2,
+                        "question": "Fluid status",
+                        "subQuestions": [
+                            {
+                                "_id": "b36c6a4b-8fcb-4d9d-9778-94f5fba61a6a",
+                                "question": "ankle edema",
+                                "optionsList": [
+                                    "0",
+                                    "1+",
+                                    "2+",
+                                    "3+"
+                                ],
+                                "questionType": "MCQ",
+                                "isGlobal": false,
+                                "value": [
+                                    "0"
+                                ],
+                                "assessmentQuestionId": "b36c6a4b-8fcb-4d9d-9778-94f5fba61a6a"
+                            },
+                            {
+                                "_id": "3c8541f-63b2-42f9-8d72-4d6e4b12d1a8",
+                                "question": "sacral edema",
+                                "optionsList": [
+                                    "0",
+                                    "1+",
+                                    "2+",
+                                    "3+"
+                                ],
+                                "questionType": "MCQ",
+                                "isGlobal": false,
+                                "value": [
+                                    "0"
+                                ],
+                                "assessmentQuestionId": "3c8541f-63b2-42f9-8d72-4d6e4b12d1a8"
+                            },
+                            {
+                                "_id": "7b4f63a9-3ae0-47d9-9c5f-7ad04cf37d5f",
+                                "question": "ascites",
+                                "optionsList": [
+                                    "0",
+                                    "1+",
+                                    "2+",
+                                    "3+"
+                                ],
+                                "questionType": "MCQ",
+                                "isGlobal": false,
+                                "value": [
+                                    "0"
+                                ],
+                                "assessmentQuestionId": "7b4f63a9-3ae0-47d9-9c5f-7ad04cf37d5f"
+                            },
+                            {
+                                "_id": "d23e4e09-556e-42e5-8c42-60b3fdb82e4d",
+                                "question": "Global fluid status rating",
+                                "optionsList": [
+                                    "0",
+                                    "1+",
+                                    "2+",
+                                    "3+"
+                                ],
+                                "questionType": "MCQ",
+                                "isGlobal": true,
+                                "value": [
+                                    "0"
+                                ],
+                                "assessmentQuestionId": "d23e4e09-556e-42e5-8c42-60b3fdb82e4d"
+                            }
+                        ],
+                        "optionsList": [],
+                        "type": "number",
+                        "computationKey": "SUBTYPE-SUM",
+                        "unit": "",
+                        "createdAt": 1720356808890,
+                        "updatedAt": 1720356808890,
+                        "hiddenFromUI": false,
+                        "assessmentQuestionId": "668a8fc8e128c4369c9e9fa6"
+                    },
+                    {
+                        "_id": "668a8fc8e128c4369c9e9fa7",
+                        "assessmentType": "PG-SGA",
+                        "assessmentSubType": "PHYSICAL-EXAM",
+                        "questionType": "SUB",
+                        "userType": "PROVIDER",
+                        "questionId": 3,
+                        "question": "Fat Stores",
+                        "subQuestions": [
+                            {
+                                "_id": "d23e4e09-556e-42e5-8c42-60b3fdb82e4d",
+                                "question": "orbital fat pads",
+                                "optionsList": [
+                                    "0",
+                                    "1+",
+                                    "2+",
+                                    "3+"
+                                ],
+                                "questionType": "MCQ",
+                                "isGlobal": false,
+                                "value": [
+                                    "0"
+                                ],
+                                "assessmentQuestionId": "d23e4e09-556e-42e5-8c42-60b3fdb82e4d"
+                            },
+                            {
+                                "_id": "5cbf6c4b-9c5b-40b5-8d9b-e6c2df6b0d5e",
+                                "question": "triceps skin fold",
+                                "optionsList": [
+                                    "0",
+                                    "1+",
+                                    "2+",
+                                    "3+"
+                                ],
+                                "questionType": "MCQ",
+                                "isGlobal": false,
+                                "value": [
+                                    "0"
+                                ],
+                                "assessmentQuestionId": "5cbf6c4b-9c5b-40b5-8d9b-e6c2df6b0d5e"
+                            },
+                            {
+                                "_id": "479f3d5c-5e3f-41f1-978e-59b162f89690",
+                                "question": "fat overlying lower ribs",
+                                "optionsList": [
+                                    "0",
+                                    "1+",
+                                    "2+",
+                                    "3+"
+                                ],
+                                "questionType": "MCQ",
+                                "isGlobal": false,
+                                "value": [
+                                    "0"
+                                ],
+                                "assessmentQuestionId": "479f3d5c-5e3f-41f1-978e-59b162f89690"
+                            },
+                            {
+                                "_id": "1db5a68a-9ff3-4e3b-81d3-0f5c3e0e7c68",
+                                "question": "Global fat deficit rating",
+                                "optionsList": [
+                                    "0",
+                                    "1+",
+                                    "2+",
+                                    "3+"
+                                ],
+                                "questionType": "MCQ",
+                                "isGlobal": true,
+                                "value": [
+                                    "0"
+                                ],
+                                "assessmentQuestionId": "1db5a68a-9ff3-4e3b-81d3-0f5c3e0e7c68"
+                            }
+                        ],
+                        "optionsList": [],
+                        "type": "number",
+                        "computationKey": "SUBTYPE-SUM",
+                        "unit": "",
+                        "createdAt": 1720356808890,
+                        "updatedAt": 1720356808890,
+                        "hiddenFromUI": false,
+                        "assessmentQuestionId": "668a8fc8e128c4369c9e9fa7"
+                    }
+                ],
+                "assessmentType": "PG-SGA",
+                "riskLevel": "Malnutrition",
+                "score": 11
+            },
+            {
+                "assessment": [
+                    {
+                        "assessmentType": "GLIM",
+                        "assessmentSubType": "GENERAL",
+                        "questionType": "CURRENT_WEIGHT",
+                        "userType": "PATIENT",
+                        "questionId": 1,
+                        "question": "What is your current weight",
+                        "computationKey": "BMI",
+                        "type": "number",
+                        "unit": "kg",
+                        "createdAt": 1719991337416,
+                        "updatedAt": 1719991337416,
+                        "assessmentQuestionId": "6684fc29a699fc2f440ad375",
+                        "value": [
+                            "80.0"
+                        ]
+                    },
+                    {
+                        "assessmentType": "GLIM",
+                        "assessmentSubType": "GENERAL",
+                        "questionType": "CURRENT_HEIGHT",
+                        "userType": "PATIENT",
+                        "questionId": 2,
+                        "question": "What is your height",
+                        "computationKey": "BMI",
+                        "type": "number",
+                        "unit": "cm",
+                        "createdAt": 1719991337416,
+                        "updatedAt": 1719991337416,
+                        "assessmentQuestionId": "6684fc29a699fc2f440ad376",
+                        "value": [
+                            "178.00"
+                        ]
+                    },
+                    {
+                        "assessmentType": "GLIM",
+                        "assessmentSubType": "GENERAL",
+                        "questionType": "WEIGHT_SIX_MONTHS_AGO",
+                        "userType": "PATIENT",
+                        "questionId": 3,
+                        "question": "What was your weight 6 months ago?",
+                        "computationKey": "WL",
+                        "type": "number",
+                        "unit": "kg",
+                        "createdAt": 1719991337416,
+                        "updatedAt": 1719991337416,
+                        "assessmentQuestionId": "6684fc29a699fc2f440ad377",
+                        "value": [
+                            100
+                        ]
+                    },
+                    {
+                        "_id": "6684fc29a699fc2f440ad378",
+                        "assessmentType": "GLIM",
+                        "assessmentSubType": "MUSCLE_MASS",
+                        "questionType": "MCQ",
+                        "userType": "PROVIDER",
+                        "questionId": 1,
+                        "question": "Reduced Muscle mass",
+                        "optionsList": [
+                            "Mild-to-moderate deficit",
+                            "severe deficit"
+                        ],
+                        "type": "string",
+                        "computationKey": "MAP",
+                        "unit": "",
+                        "mappedOptions": {
+                            "Mild-to-moderate deficit": 0,
+                            "severe deficit": 1
+                        },
+                        "createdAt": 1719991337416,
+                        "updatedAt": 1719991337416,
+                        "hiddenFromUI": false,
+                        "value": [
+                            "Mild-to-moderate deficit"
+                        ],
+                        "assessmentQuestionId": "6684fc29a699fc2f440ad378"
+                    },
+                    {
+                        "_id": "6684fc29a699fc2f440ad379",
+                        "assessmentType": "GLIM",
+                        "assessmentSubType": "INFLAMMATION",
+                        "questionType": "MCQ",
+                        "userType": "PROVIDER",
+                        "questionId": 1,
+                        "question": "Inflammation",
+                        "optionsList": [
+                            "Mild-to-moderate deficit",
+                            "severe deficit"
+                        ],
+                        "type": "string",
+                        "computationKey": "MAP",
+                        "unit": "",
+                        "mappedOptions": {
+                            "Mild-to-moderate deficit": 0,
+                            "severe deficit": 1
+                        },
+                        "createdAt": 1719991337416,
+                        "updatedAt": 1719991337416,
+                        "hiddenFromUI": false,
+                        "value": [
+                            "severe deficit"
+                        ],
+                        "assessmentQuestionId": "6684fc29a699fc2f440ad379"
+                    }
+                ],
+                "assessmentType": "GLIM",
+                "riskLevel": "severe"
+            }
+        ]
+    }, {
+        "_id": {
+            "$oid": "671232db2ff09c0a7e163213"
+        },
+        "allAssessmentLogsCompleted": true,
+        "medicalProfileId": "654864f7c7f84684160913d3",
+        "createdAt": 1729245915250,
+        "isProviderAssessmentAvailable": true,
+        "updatedAt": 1729245928448,
+        "userAssessmentLog": [
+            {
+                "assessment": [
+                    {
+                        "createdAt": 1719991337416,
+                        "value": [
+                            "35.0"
+                        ],
+                        "questionType": "CURRENT_WEIGHT",
+                        "questionId": 1,
+                        "assessmentSubType": "GENERAL",
+                        "assessmentType": "SCREENING",
+                        "userType": "PATIENT",
+                        "unit": "kg",
+                        "assessmentQuestionId": "6684fc29a699fc2f440ad363",
+                        "type": "number",
+                        "updatedAt": 1719991337416,
+                        "computationKey": "BMI",
+                        "hiddenFromUI": false,
+                        "question": "What is your current weight"
+                    },
+                    {
+                        "assessmentQuestionId": "6684fc29a699fc2f440ad364",
+                        "question": "What is your height",
+                        "computationKey": "BMI",
+                        "unit": "cm",
+                        "assessmentSubType": "GENERAL",
+                        "userType": "PATIENT",
+                        "createdAt": 1719991337416,
+                        "type": "number",
+                        "questionType": "CURRENT_HEIGHT",
+                        "hiddenFromUI": false,
+                        "updatedAt": 1719991337416,
+                        "questionId": 2,
+                        "assessmentType": "SCREENING",
+                        "value": [
+                            "91.0"
+                        ]
+                    },
+                    {
+                        "questionId": 3,
+                        "type": "number",
+                        "question": "What was your weight 6 months ago?",
+                        "assessmentType": "SCREENING",
+                        "value": [
+                            "35.0"
+                        ],
+                        "unit": "kg",
+                        "assessmentQuestionId": "6684fc29a699fc2f440ad365",
+                        "userType": "PATIENT",
+                        "hiddenFromUI": false,
+                        "questionType": "WEIGHT_SIX_MONTHS_AGO",
+                        "assessmentSubType": "GENERAL",
+                        "createdAt": 1719991337416,
+                        "updatedAt": 1719991337416,
+                        "computationKey": "WL"
+                    },
+                    {
+                        "questionId": 4,
+                        "assessmentQuestionId": "6684fc29a699fc2f440ad366",
+                        "optionsList": [
+                            "YES",
+                            "NO"
+                        ],
+                        "updatedAt": 1719991337416,
+                        "createdAt": 1719991337416,
+                        "assessmentSubType": "GENERAL",
+                        "computationKey": "MAP",
+                        "userType": "PATIENT",
+                        "hiddenFromUI": false,
+                        "question": "Are you hospitalized and critically ill and/or have been 5 days or more without ingesting regular foods and beverages?",
+                        "value": [
+                            "YES"
+                        ],
+                        "assessmentType": "SCREENING",
+                        "questionType": "MCQ",
+                        "unit": "",
+                        "type": "string",
+                        "mappedOptions": {
+                            "YES": 2,
+                            "NO": 0
+                        }
+                    }
+                ],
+                "assessmentType": "SCREENING",
+                "riskLevel": "High risk",
+                "score": 2
+            },
+            {
+                "assessment": [
+                    {
+                        "assessmentQuestionId": "6684fc29a699fc2f440ad367",
+                        "question": "My current weight is",
+                        "assessmentSubType": "GENERAL",
+                        "unit": "kg",
+                        "computationKey": "BMI",
+                        "userType": "PATIENT",
+                        "createdAt": 1719991337416,
+                        "questionType": "CURRENT_WEIGHT",
+                        "type": "number",
+                        "hiddenFromUI": false,
+                        "updatedAt": 1719991337416,
+                        "questionId": 1,
+                        "assessmentType": "PG-SGA",
+                        "value": [
+                            "35.0"
+                        ]
+                    },
+                    {
+                        "computationKey": "BMI",
+                        "assessmentQuestionId": "6684fc29a699fc2f440ad368",
+                        "updatedAt": 1719991337416,
+                        "assessmentSubType": "GENERAL",
+                        "questionId": 2,
+                        "question": "My height is",
+                        "createdAt": 1719991337416,
+                        "hiddenFromUI": false,
+                        "value": [
+                            "91.0"
+                        ],
+                        "userType": "PATIENT",
+                        "assessmentType": "PG-SGA",
+                        "questionType": "CURRENT_HEIGHT",
+                        "type": "number",
+                        "unit": "cm"
+                    },
+                    {
+                        "questionId": 1,
+                        "type": "number",
+                        "question": "1 month ago I weighted about",
+                        "assessmentType": "PG-SGA",
+                        "value": [
+                            "35.0"
+                        ],
+                        "unit": "kg",
+                        "assessmentQuestionId": "6684fc29a699fc2f440ad369",
+                        "userType": "PATIENT",
+                        "hiddenFromUI": false,
+                        "questionType": "WEIGHT_ONE_MONTH_AGO",
+                        "assessmentSubType": "HEIGHT_WEIGHT",
+                        "updatedAt": 1719991337416,
+                        "createdAt": 1719991337416,
+                        "computationKey": "WL"
+                    },
+                    {
+                        "assessmentType": "PG-SGA",
+                        "hiddenFromUI": true,
+                        "questionType": "WEIGHT_SIX_MONTHS_AGO",
+                        "question": "What was your weight 6 months ago?",
+                        "createdAt": 1719991337416,
+                        "value": [
+                            35
+                        ],
+                        "type": "number",
+                        "assessmentSubType": "GENERAL",
+                        "userType": "PATIENT",
+                        "computationKey": "WL",
+                        "updatedAt": 1719991337416,
+                        "questionId": 2,
+                        "unit": "kg",
+                        "assessmentQuestionId": "6684fc29a699fc2f440ad36a"
+                    },
+                    {
+                        "hiddenFromUI": false,
+                        "assessmentSubType": "HEIGHT_WEIGHT",
+                        "updatedAt": 1719991337416,
+                        "computationKey": "MAP",
+                        "question": "During the past 2 weeks my weight has",
+                        "assessmentType": "PG-SGA",
+                        "value": [
+                            "NOT CHANGED"
+                        ],
+                        "questionId": 2,
+                        "assessmentQuestionId": "6684fc29a699fc2f440ad36b",
+                        "unit": "kg",
+                        "userType": "PATIENT",
+                        "optionsList": [
+                            "DECREASED",
+                            "INCREASED",
+                            "NOT CHANGED"
+                        ],
+                        "questionType": "MCQ",
+                        "type": "string",
+                        "createdAt": 1719991337416,
+                        "mappedOptions": {
+                            "DECREASED": 1,
+                            "INCREASED": 0,
+                            "NOT CHANGED": 0
+                        }
+                    },
+                    {
+                        "assessmentSubType": "FOOD_INTAKE",
+                        "questionId": 1,
+                        "createdAt": 1719991337416,
+                        "question": "As compared to my normal intake, I would rate my food intake during the past month as",
+                        "assessmentType": "PG-SGA",
+                        "hiddenFromUI": false,
+                        "updatedAt": 1719991337416,
+                        "computationKey": "MAP",
+                        "unit": "",
+                        "value": [
+                            "NOT CHANGED"
+                        ],
+                        "userType": "PATIENT",
+                        "optionsList": [
+                            "LESS THAN USUAL",
+                            "MORE THAN USUAL",
+                            "NOT CHANGED"
+                        ],
+                        "questionType": "MCQ",
+                        "type": "string",
+                        "assessmentQuestionId": "6684fc29a699fc2f440ad36c",
+                        "mappedOptions": {
+                            "LESS THAN USUAL": 1,
+                            "MORE THAN USUAL": 0,
+                            "NOT CHANGED": 0
+                        }
+                    },
+                    {
+                        "question": "I am now taking",
+                        "value": [
+                            "NONE"
+                        ],
+                        "questionId": 1,
+                        "userType": "PATIENT",
+                        "assessmentSubType": "FOOD_INTAKE",
+                        "createdAt": 1719991337416,
+                        "type": "string",
+                        "questionType": "MCQ",
+                        "unit": "",
+                        "assessmentType": "PG-SGA",
+                        "hiddenFromUI": false,
+                        "assessmentQuestionId": "6684fc29a699fc2f440ad36d",
+                        "optionsList": [
+                            "NORMAL FOOD BUT IN LESS THAN NORMAL AMOUNT",
+                            "LITTLE SOLID FOOD",
+                            "ONLY LIQUIDS",
+                            "ONLY NUTRITIONAL SUPPLEMENTS",
+                            "VERY LITTLE OF ANYTHING",
+                            "ONLY TUBE FEEDING OR NUTRITION BY VEIN",
+                            "NONE"
+                        ],
+                        "updatedAt": 1719991337416,
+                        "computationKey": "MAP",
+                        "mappedOptions": {
+                            "NORMAL FOOD BUT IN LESS THAN NORMAL AMOUNT": 1,
+                            "LITTLE SOLID FOOD": 2,
+                            "ONLY LIQUIDS": 3,
+                            "ONLY NUTRITIONAL SUPPLEMENTS": 3,
+                            "VERY LITTLE OF ANYTHING": 4,
+                            "ONLY TUBE FEEDING OR NUTRITION BY VEIN": 0,
+                            "NONE": 0
+                        }
+                    },
+                    {
+                        "optionsList": [
+                            "NO PROBLEMS EATING",
+                            "NO APPETITE",
+                            "NAUSEA",
+                            "CONSTIPATION",
+                            "MOUTH SORES",
+                            "THINGS TASTE FUNNY OR HAVE NO TASTE",
+                            "PROBLEM SWALLOWING",
+                            "PAIN",
+                            "VOMITING",
+                            "DIARRHEA",
+                            "DRY MOUTH",
+                            "SMELLS BOTHER ME",
+                            "FEEL FULL QUICKLY",
+                            "FATIGUE",
+                            "OTHER"
+                        ],
+                        "question": "I have had the following problems that have kept me from eating enough during the past 2 weeks",
+                        "type": "string",
+                        "userType": "PATIENT",
+                        "createdAt": 1719991337416,
+                        "value": [
+                            "VOMITING"
+                        ],
+                        "assessmentQuestionId": "6684fc29a699fc2f440ad36e",
+                        "updatedAt": 1719991337416,
+                        "assessmentType": "PG-SGA",
+                        "unit": "",
+                        "hiddenFromUI": false,
+                        "assessmentSubType": "SYMPTOMS",
+                        "questionId": 1,
+                        "computationKey": "MAP",
+                        "questionType": "MSQ",
+                        "mappedOptions": {
+                            "NO PROBLEMS EATING": 0,
+                            "NO APPETITE": 3,
+                            "NAUSEA": 1,
+                            "CONSTIPATION": 1,
+                            "MOUTH SORES": 2,
+                            "THINGS TASTE FUNNY OR HAVE NO TASTE": 1,
+                            "PROBLEM SWALLOWING": 2,
+                            "PAIN": 3,
+                            "VOMITING": 3,
+                            "DIARRHEA": 3,
+                            "DRY MOUTH": 1,
+                            "SMELLS BOTHER ME": 1,
+                            "FEEL FULL QUICKLY": 1,
+                            "FATIGUE": 1,
+                            "OTHER": 1
+                        }
+                    },
+                    {
+                        "assessmentSubType": "ACTIVITIES_AND_FUNCTION",
+                        "questionType": "MCQ",
+                        "questionId": 1,
+                        "type": "string",
+                        "assessmentType": "PG-SGA",
+                        "question": "Over the past month I would generally rate my activity as",
+                        "unit": "",
+                        "createdAt": 1719991337416,
+                        "hiddenFromUI": false,
+                        "optionsList": [
+                            "NORMAL WITH NO LIMITATIONS",
+                            "NOT MY NORMAL SELF BUT ABLE TO KEEP UP MOST OF NORMAL ACTIVITIES",
+                            "NOT FEELING UP TO MOST THINGS",
+                            "ABLE TO DO LITTLE THINGS OR SPEND MOST OF ALL DAY IN BED OR CHAIR"
+                        ],
+                        "value": [
+                            "ABLE TO DO LITTLE THINGS OR SPEND MOST OF ALL DAY IN BED OR CHAIR"
+                        ],
+                        "computationKey": "MAP",
+                        "updatedAt": 1719991337416,
+                        "assessmentQuestionId": "6684fc29a699fc2f440ad36f",
+                        "userType": "PATIENT",
+                        "mappedOptions": {
+                            "NORMAL WITH NO LIMITATIONS": 0,
+                            "NOT MY NORMAL SELF BUT ABLE TO KEEP UP MOST OF NORMAL ACTIVITIES": 1,
+                            "NOT FEELING UP TO MOST THINGS": 2,
+                            "ABLE TO DO LITTLE THINGS OR SPEND MOST OF ALL DAY IN BED OR CHAIR": 3
+                        }
+                    }
+                ],
+                "assessmentType": "PG-SGA",
+                "riskLevel": "Malnutrition",
+                "score": 6
+            }
+        ]
+    }
+]
+
+const patientNotesData = [
+    {
+        "_id": {
+            "$oid": "67cbbcbfe1280b761c716297"
+        },
+        "medicalProfileId": "6723041b7ee984705f6bfbe2",
+        "title": "Important Not to self",
+        "imageId": "",
+        "description": "Must remember to buy more of that oat milk. The one with the blue carton. Or was it teal? Definitely a cool color. And also, did I water the basil? Pretty sure it looked droopy this morning. Speaking of mornings, why do socks always disappear in the dryer? It's like a tiny sock-eating monster lives in there. Maybe I should leave a little fabric softener offering. Or, no, that's silly. But still, where do they go? Also, that bird outside is really insistent today. What's it trying to tell me? Is it a warning? Or just a really enthusiastic song? I should probably check the weather. And also, did I reply to that email? Oh, and the library book is due... tomorrow? Or was it Tuesday? Must. check. Must. Check. And also, where did I put my keys?",
+        "createdAt": 1741405375458,
+        "updatedAt": 1741405375458
+    },
+    {
+        "_id": {
+            "$oid": "67cbbcbfe1280b761c716297"
+        },
+        "medicalProfileId": "6723041b7ee984705f6bfbe2",
+        "title": "Another Note",
+        "imageId": "6723041b7ee984705f6bfbe2",
+        "description": "Must remember to buy more of that oat milk. The one with the blue carton. Or was it teal? Definitely a cool color. And also, did I water the basil? Pretty sure it looked droopy this morning. Speaking of mornings, why do socks always disappear in the dryer? It's like a tiny sock-eating monster lives in there. Maybe I should leave a little fabric softener offering. Or, no, that's silly. But still, where do they go? Also, that bird outside is really insistent today. What's it trying to tell me? Is it a warning? Or just a really enthusiastic song? I should probably check the weather. And also, did I reply to that email? Oh, and the library book is due... tomorrow? Or was it Tuesday? Must. check. Must. Check. And also, where did I put my keys?",
+        "createdAt": 1741405375458,
+        "updatedAt": 1741405375458
+    }
+]
 // Example usage:
 generatePDF(
     { name: "Milyn CC", age: 45 },
@@ -7955,6 +9316,8 @@ generatePDF(
     stepData,
     medicationData,
     90,
-    surveyData
+    surveyData,
+    nutritionAssessmentData,
+    patientNotesData
 );
 
