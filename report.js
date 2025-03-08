@@ -25,6 +25,16 @@ function filterNutritionLogsByTimeframe(logs, timeframeDays) {
     return logs.filter(d => d.createdAt >= startDate);
 }
 
+function filterMedicationDataByTimeframe(data, timeframeDays, dateField = "createdAt") {
+    const now = moment().tz(TIMEZONE).startOf("day").valueOf();
+    const startDate = now - (timeframeDays - 1) * 24 * 60 * 60 * 1000;
+
+    return data.filter(d => {
+        const dateValue = d[dateField];
+        return dateValue >= startDate;
+    });
+}
+
 async function generateTemperatureChart(data, benchmark, timeframeDays) {
     // Filter & sort logs by date so the line connects in chronological order
     const filteredData = filterDataByTimeframe(data, timeframeDays)
@@ -173,6 +183,105 @@ async function generateHeartRateChart(data, benchmark, timeframeDays) {
 
     return chartJSNodeCanvas.renderToBuffer(configuration);
 }
+
+function generateSurveysSection(doc, surveyData) {
+    // Start a new page for surveys
+    doc.addPage();
+
+    // Title for entire Surveys section
+    doc.font("Helvetica-Bold").fontSize(16)
+        .text("Survey Responses", { align: "center" })
+        .moveDown(1);
+
+    // Helpers to keep font usage consistent
+    function setQuestionFont() {
+        // *** Make sure question text is always the same size & style
+        doc.font("Helvetica-Bold").fontSize(12);
+    }
+    function setAnswerFont() {
+        // *** Make sure answer text is always the same size & style
+        doc.font("Helvetica").fontSize(12);
+    }
+
+    // Helper for blank or partial answers
+    function getAnswerText(q) {
+        if (!q.valueList || !q.valueList.length) {
+            return "(No answer given)";
+        }
+        const nonEmpty = q.valueList.filter(ans => ans.trim() !== "");
+        if (!nonEmpty.length) return "(No answer given)";
+
+        // If question mentions "weight" or "height", append units to numeric answers
+        const questionText = (q.question || "").toLowerCase();
+        let appendedAnswers = nonEmpty.map(ans => {
+            const trimmed = ans.trim();
+            const isNumeric = /^[0-9]+(\.[0-9]+)?$/.test(trimmed);
+            if (isNumeric) {
+                if (questionText.includes("weight")) {
+                    return trimmed + " lbs";
+                } else if (questionText.includes("height")) {
+                    return trimmed + " in";
+                }
+            }
+            return trimmed;
+        });
+
+        return appendedAnswers.join(", ");
+    }
+
+    if (!Array.isArray(surveyData) || !surveyData.length) {
+        doc.font("Helvetica").fontSize(12)
+            .text("No surveys found.", { align: "left" });
+        return;
+    }
+
+    // Loop over each survey
+    surveyData.forEach((survey, surveyIndex) => {
+        // Add extra spacing before subsequent surveys
+        if (surveyIndex > 0) {
+            doc.moveDown(2);
+        }
+
+        // Format submission date
+        const submissionDateStr = survey.submissionDate
+            ? moment(survey.submissionDate).tz("Asia/Kolkata").format("DD MMM YYYY")
+            : "No submission date";
+
+        // SURVEY TITLE
+        doc.font("Helvetica-Bold").fontSize(14)
+            .text(`Survey #${surveyIndex + 1}: ${survey.title || "Untitled"} (${submissionDateStr})`)
+            .moveDown(0.5);
+
+        // FREQUENCY & STATUS
+        doc.font("Helvetica").fontSize(12);
+        if (survey.frequency) {
+            doc.text(`Frequency: ${survey.frequency}`, { align: "left" }).moveDown(0.5);
+        }
+        doc.text(`Submission Status: ${survey.submissionStatus || "UNKNOWN"}`, { align: "left" })
+            .moveDown(1);
+
+        // QUESTIONS
+        if (Array.isArray(survey.assessmentLogs)) {
+            survey.assessmentLogs.forEach((q, idx) => {
+                // Question in bold, size 12
+                setQuestionFont();
+                doc.text(`${idx + 1}) ${q.question}`, { align: "left" })
+                    .moveDown(0.25);
+
+                // Answer in normal, size 12
+                setAnswerFont();
+                const answerText = getAnswerText(q);
+
+                if (q.questionType === "scale_rating") {
+                    doc.text(`Rating: ${answerText}`, { align: "left" }).moveDown(0.75);
+                } else {
+                    doc.text(`Answer: ${answerText}`, { align: "left" }).moveDown(0.75);
+                }
+            });
+        }
+    });
+}
+
 
 function addHeaderFooterAbsolute(doc, patientInfo) {
     doc.save();
@@ -930,6 +1039,142 @@ async function generateStepCountChart(stepData, timeframeDays) {
     return chartJSNodeCanvas.renderToBuffer(configuration);
 }
 
+/**
+ * Generates a stacked bar chart showing medication logs:
+ *   - Each bar's total height = totalPrescribed.
+ *   - Lower portion ("Consumed") is green if fullyCompliant, red otherwise.
+ *   - Upper portion ("Remaining") is gray.
+ */
+async function generateMedicationStackedChart(medicationData, timeframeDays) {
+    // 1) Filter & sort logs by date (using "currentDate")
+    const filteredLogs = filterMedicationDataByTimeframe(
+        medicationData.logs,
+        timeframeDays,
+        "currentDate"
+    ).sort((a, b) => a.currentDate - b.currentDate);
+
+    // 2) Build arrays for "Consumed" and "Remaining"
+    const consumedData = [];
+    const leftoverData = [];
+
+    // For coloring consumed portion: green if fullyCompliant, else red
+    const consumedColors = [];
+
+    filteredLogs.forEach(log => {
+        const dateX = log.currentDate;
+        const consumed = log.totalConsumed;
+        const leftover = Math.max(0, log.totalPrescribed - consumed);
+
+        consumedData.push({ x: dateX, y: consumed });
+        leftoverData.push({ x: dateX, y: leftover });
+
+        // If fullyCompliant => green, else red
+        consumedColors.push(log.fullyCompliant ? "#00B050" : "#FA114F");
+    });
+
+    // 3) Chart.js configuration (stacked bar)
+    const configuration = {
+        type: "bar",
+        data: {
+            datasets: [
+                {
+                    // REAL DATASET #1: Consumed
+                    label: "Consumed",
+                    data: consumedData,
+                    backgroundColor: consumedColors,
+                    parsing: {
+                        xAxisKey: "x",
+                        yAxisKey: "y"
+                    }
+                },
+                {
+                    // REAL DATASET #2: Remaining
+                    label: "Remaining",
+                    data: leftoverData,
+                    backgroundColor: "#636363",
+                    parsing: {
+                        xAxisKey: "x",
+                        yAxisKey: "y"
+                    }
+                },
+
+                // DUMMY DATASET #3: just for the legend (Compliant)
+                {
+                    label: "Consumed (Compliant)",
+                    backgroundColor: "#00B050",
+                    data: [],        // no data => won't plot bars
+                    // ensure it doesn't stack or show tooltips
+                    stack: "dummy",  // put it on a different stack if needed
+                    barPercentage: 0,
+                    tooltip: { enabled: false }
+                },
+                // DUMMY DATASET #4: just for the legend (Non-Compliant)
+                {
+                    label: "Consumed (Non-Compliant)",
+                    backgroundColor: "#FA114F",
+                    data: [],
+                    stack: "dummy",
+                    barPercentage: 0,
+                    tooltip: { enabled: false }
+                }
+            ]
+        },
+        options: {
+            scales: {
+                x: {
+                    type: "time",
+                    time: {
+                        tooltipFormat: "DD MMM YYYY",
+                        displayFormats: {
+                            day: "DD MMM"
+                        }
+                    },
+                    stacked: true,
+                    title: { display: true, text: "Date" }
+                },
+                y: {
+                    stacked: true,
+                    title: {
+                        display: true,
+                        text: medicationData.unit || "units"
+                    }
+                }
+            },
+            plugins: {
+                legend: { position: "bottom" },
+                tooltip: {
+                    callbacks: {
+                        label: context => {
+                            const val = context.raw.y;
+                            if (context.dataset.label === "Consumed") {
+                                // Check which color is used for this bar
+                                const barColor = context.dataset.backgroundColor[context.dataIndex];
+                                if (barColor === "#00B050") {
+                                    return `Consumed (Compliant): ${val} ${medicationData.unit || "units"}`;
+                                } else {
+                                    return `Consumed (Non-Compliant): ${val} ${medicationData.unit || "units"}`;
+                                }
+                            } else if (context.dataset.label === "Remaining") {
+                                return `Remaining: ${val} ${medicationData.unit || "units"}`;
+                            }
+                            return "";
+                        },
+                        footer: tooltipItems => {
+                            if (!tooltipItems.length) return "";
+                            const index = tooltipItems[0].dataIndex;
+                            const log = filteredLogs[index];
+                            const total = log.totalPrescribed;
+                            return `Total Prescribed: ${total} ${medicationData.unit || "units"}`;
+                        }
+                    }
+                }
+            }
+        }
+    };
+
+    // 4) Render the chart to a buffer
+    return chartJSNodeCanvas.renderToBuffer(configuration);
+}
 
 async function generatePDF(
     patientInfo,
@@ -942,7 +1187,9 @@ async function generatePDF(
     weightData,
     activityData,
     stepData,
-    timeframeDays
+    medicationData,
+    timeframeDays,
+    surveyData
 ) {
     try {
         const pdfPath = path.join(__dirname, `patient_report_${Date.now()}.pdf`);
@@ -1324,8 +1571,47 @@ async function generatePDF(
             }).moveDown(3);
         }
 
-        //doc.moveDown(100)
+        doc.moveDown(100)
 
+        if (medicationData) {
+            doc.addPage(); // optional if you want a new page
+
+            doc.fontSize(16)
+                .text(`Medication (Last ${timeframeDays} days)`, { align: "center" })
+                .moveDown();
+
+            // If you want to show "goalAverage" or "actualAverage" from medicationData:
+            const goalAvg = medicationData.goalAverage?.toFixed(2) || "-";
+            const actualAvg = medicationData.actualAverage?.toFixed(2) || "-";
+
+            doc.fontSize(12)
+                .text(`Goal Average: ${goalAvg} ${medicationData.unit}`, { align: "left" })
+                .moveDown(0.5)
+                .text(`Actual Average: ${actualAvg} ${medicationData.unit}`, { align: "left" })
+                .moveDown(1);
+
+            // Generate & embed the stacked bar chart
+            const medicationChart = await generateMedicationStackedChart(
+                medicationData,
+                timeframeDays
+            );
+            doc.image(medicationChart, {
+                width: 550,
+                align: "center",
+                valign: "center",
+                x: (doc.page.width - 550) / 2
+            }).moveDown(3);
+        }
+
+        doc.moveDown(100)
+
+        // *** ADD SURVEYS NEAR THE END *** //
+        if (surveyData && surveyData.length) {
+            generateSurveysSection(doc, surveyData);
+        }
+
+
+        //doc.moveDown(100)
         // End & save PDF
         doc.end();
         stream.on("finish", () => {
@@ -7291,6 +7577,794 @@ const stepData = {
     }
 }
 
+const medicationData = {
+    "goalAverage": 0,
+    "actualAverage": 0,
+    "unit": "units",
+    "logs": [
+        {
+            "currentDate": 1741392000000,
+            "createdAt": 1741410889067,
+            "updatedAt": 1741410889067,
+            "totalPrescribed": 200,
+            "totalConsumed": 150,
+            "dosageRemaining": 50,
+            "fullyCompliant": false
+        },
+        {
+            "currentDate": 1741305600000,
+            "createdAt": 1741322602800,
+            "updatedAt": 1741322602800,
+            "totalPrescribed": 200,
+            "totalConsumed": 200,
+            "dosageRemaining": 0,
+            "fullyCompliant": true
+        },
+        {
+            "currentDate": 1740873600000,
+            "createdAt": 1740903010729,
+            "updatedAt": 1740903010729,
+            "totalPrescribed": 200,
+            "totalConsumed": 200,
+            "dosageRemaining": 0,
+            "fullyCompliant": true
+        },
+        {
+            "currentDate": 1740614400000,
+            "createdAt": 1740651110300,
+            "updatedAt": 1740651110300,
+            "totalPrescribed": 200,
+            "totalConsumed": 50,
+            "dosageRemaining": 150,
+            "fullyCompliant": false
+        },
+        {
+            "currentDate": 1738022400000,
+            "createdAt": 1738043605942,
+            "updatedAt": 1738043605942,
+            "totalPrescribed": 4640,
+            "totalConsumed": 22,
+            "dosageRemaining": 4618,
+            "fullyCompliant": false
+        },
+        {
+            "currentDate": 1737936000000,
+            "createdAt": 1737960886660,
+            "updatedAt": 1737960886660,
+            "totalPrescribed": 4640,
+            "totalConsumed": 27,
+            "dosageRemaining": 4613,
+            "fullyCompliant": false
+        },
+        {
+            "currentDate": 1737331200000,
+            "createdAt": 1737355032408,
+            "updatedAt": 1737355032408,
+            "totalPrescribed": 4714,
+            "totalConsumed": 32,
+            "dosageRemaining": 4682,
+            "fullyCompliant": false
+        },
+        {
+            "currentDate": 1736985600000,
+            "createdAt": 1737000276936,
+            "updatedAt": 1737000276936,
+            "totalPrescribed": 4714,
+            "totalConsumed": 62,
+            "dosageRemaining": 4652,
+            "fullyCompliant": false
+        },
+        {
+            "currentDate": 1736899200000,
+            "createdAt": 1736940275125,
+            "updatedAt": 1736940275125,
+            "totalPrescribed": 4714,
+            "totalConsumed": 3,
+            "dosageRemaining": 4711,
+            "fullyCompliant": false
+        },
+        {
+            "currentDate": 1736812800000,
+            "createdAt": 1736940257853,
+            "updatedAt": 1736940257853,
+            "totalPrescribed": 4714,
+            "totalConsumed": 66,
+            "dosageRemaining": 4648,
+            "fullyCompliant": false
+        },
+        {
+            "currentDate": 1736553600000,
+            "createdAt": 1736611015395,
+            "updatedAt": 1736611015395,
+            "totalPrescribed": 4714,
+            "totalConsumed": 27,
+            "dosageRemaining": 4687,
+            "fullyCompliant": false
+        },
+        {
+            "currentDate": 1736380800000,
+            "createdAt": 1736362537254,
+            "updatedAt": 1736362537254,
+            "totalPrescribed": 4714,
+            "totalConsumed": 27,
+            "dosageRemaining": 4687,
+            "fullyCompliant": false
+        },
+        {
+            "currentDate": 1736294400000,
+            "createdAt": 1736354326534,
+            "updatedAt": 1736354326534,
+            "totalPrescribed": 4640,
+            "totalConsumed": 44,
+            "dosageRemaining": 4596,
+            "fullyCompliant": false
+        },
+        {
+            "currentDate": 1736208000000,
+            "createdAt": 1736230738803,
+            "updatedAt": 1736230738803,
+            "totalPrescribed": 200,
+            "totalConsumed": 0,
+            "dosageRemaining": 200,
+            "fullyCompliant": false
+        },
+        {
+            "currentDate": 1734220800000,
+            "createdAt": 1734235578852,
+            "updatedAt": 1734235578852,
+            "totalPrescribed": 1120,
+            "totalConsumed": 0,
+            "dosageRemaining": 1120,
+            "fullyCompliant": false
+        }
+    ],
+    "benchMarks": null
+}
+
+const surveyData = [
+    {
+        "_id": {
+            "$oid": "67aeefbc401feb11755f1510"
+        },
+        "assessmentLogs": [
+            {
+                "criticalIndex": 4,
+                "optionsList": [
+                    "0",
+                    "1",
+                    "2",
+                    "3",
+                    "4"
+                ],
+                "question": "How severe was your Headache?",
+                "questionId": "079f852c-7713-47d8-bba7-ce3eaf804377",
+                "questionType": "scale_rating",
+                "scaleOptions": [
+                    {
+                        "index": 0,
+                        "label": "Not present"
+                    },
+                    {
+                        "index": 1,
+                        "label": "Mild"
+                    },
+                    {
+                        "index": 2,
+                        "label": "Moderate"
+                    },
+                    {
+                        "index": 3,
+                        "label": "Severe"
+                    },
+                    {
+                        "index": 4,
+                        "label": "Disabling"
+                    }
+                ],
+                "stableIndex": 0,
+                "symptomTypeId": "5c6a928899401c717c8a63ff",
+                "valueList": [
+                    "0"
+                ],
+                "ratingPercentage": 0,
+                "isCritical": false,
+                "criticalThresholdPercentage": 70,
+                "severity": 0
+            },
+            {
+                "criticalIndex": 4,
+                "optionsList": [
+                    "0",
+                    "1",
+                    "2",
+                    "3",
+                    "4"
+                ],
+                "question": "How severe was your Vomiting?",
+                "questionId": "de0d8499-3560-41e9-be10-4bc110e90d84",
+                "questionType": "scale_rating",
+                "scaleOptions": [
+                    {
+                        "index": 0,
+                        "label": "Not present"
+                    },
+                    {
+                        "index": 1,
+                        "label": "Mild"
+                    },
+                    {
+                        "index": 2,
+                        "label": "Moderate"
+                    },
+                    {
+                        "index": 3,
+                        "label": "Severe"
+                    },
+                    {
+                        "index": 4,
+                        "label": "Disabling"
+                    }
+                ],
+                "stableIndex": 0,
+                "symptomTypeId": "5c6a928899401c717c8a6403",
+                "valueList": [
+                    "0"
+                ],
+                "ratingPercentage": 0,
+                "isCritical": false,
+                "criticalThresholdPercentage": 70,
+                "severity": 0
+            },
+            {
+                "criticalIndex": 4,
+                "optionsList": [
+                    "0",
+                    "1",
+                    "2",
+                    "3",
+                    "4"
+                ],
+                "question": "How severe was your Nausea?",
+                "questionId": "ed914278-d107-4a4d-b891-8dcf1d7ec4e8",
+                "questionType": "scale_rating",
+                "scaleOptions": [
+                    {
+                        "index": 0,
+                        "label": "Not present"
+                    },
+                    {
+                        "index": 1,
+                        "label": "Mild"
+                    },
+                    {
+                        "index": 2,
+                        "label": "Moderate"
+                    },
+                    {
+                        "index": 3,
+                        "label": "Severe"
+                    },
+                    {
+                        "index": 4,
+                        "label": "Disabling"
+                    }
+                ],
+                "stableIndex": 0,
+                "symptomTypeId": "5c6a928899401c717c8a6402",
+                "valueList": [
+                    "0"
+                ],
+                "ratingPercentage": 0,
+                "isCritical": false,
+                "criticalThresholdPercentage": 70,
+                "severity": 0
+            },
+            {
+                "question": "How are you feeling today?",
+                "questionId": "c56276da-19a8-4b01-96ea-240675ed4c11",
+                "questionType": "text",
+                "valueList": [
+                    "Sample"
+                ]
+            },
+            {
+                "optionsList": [
+                    "Severe",
+                    "Mild",
+                    "Not Present",
+                    "Not Sure",
+                    "Very Bad",
+                    "Very Bad"
+                ],
+                "question": "How is your headache?",
+                "questionId": "0c01a2a3-2ac9-4c19-af0a-bb2de088c65d",
+                "questionType": "mcq",
+                "valueList": [
+                    "Not Present"
+                ]
+            },
+            {
+                "optionsList": [
+                    "Fruits",
+                    "Veggies",
+                    "Juice",
+                    "Water",
+                    "Yogurt",
+                    "Salad",
+                    "Salad"
+                ],
+                "question": "What did you have today?",
+                "questionId": "1f67e451-a659-423f-b8f9-9648084bedbc",
+                "questionType": "msq",
+                "valueList": [
+                    "Fruits"
+                ]
+            },
+            {
+                "criticalIndex": 4,
+                "optionsList": [
+                    "0",
+                    "1",
+                    "2",
+                    "3",
+                    "4"
+                ],
+                "question": "How was your health yesterday?",
+                "questionId": "b1f21bfa-2318-4c53-bb7d-dd7e33945608",
+                "questionType": "scale_rating",
+                "scaleOptions": [
+                    {
+                        "index": 0,
+                        "label": "Not present"
+                    },
+                    {
+                        "index": 1,
+                        "label": "Mild"
+                    },
+                    {
+                        "index": 2,
+                        "label": "Moderate"
+                    },
+                    {
+                        "index": 3,
+                        "label": "Severe"
+                    },
+                    {
+                        "index": 4,
+                        "label": "Disabling"
+                    }
+                ],
+                "stableIndex": 0,
+                "symptomTypeId": "",
+                "valueList": [
+                    "0"
+                ],
+                "ratingPercentage": 0,
+                "isCritical": false,
+                "criticalThresholdPercentage": 70,
+                "severity": 0
+            },
+            {
+                "question": "Enter Your Current Weight",
+                "questionId": "4fb95242-74a9-4874-8af4-da912fb1c31e",
+                "questionType": "weight",
+                "unit": "kg",
+                "valueList": [
+                    "90.0"
+                ]
+            }
+        ],
+        "createdAt": 1739517884034,
+        "endDate": 1743386400000,
+        "frequency": "DAILY",
+        "medicalProfileId": "6723041b7ee984705f6bfbe2",
+        "providerId": "5cd5077e313e9d79f742d520",
+        "startDate": 1739509200172,
+        "submissionDate": 1739517884034,
+        "submissionEndDate": 1739595540172,
+        "submissionStatus": "COMPLETED",
+        "surveyId": "67aeed1c14b8de46f247d342",
+        "surveyType": "PATIENT_SPECIFIC_QUESTIONNAIRE",
+        "title": "Test Questionnaire Feb 6",
+        "updatedAt": 1739517884034
+    },
+    {
+        "_id": {
+            "$oid": "67976afbe505ee6df2039a79"
+        },
+        "assessmentLogs": [
+            {
+                "question": "How severe was your Headache?",
+                "symptomTypeId": "5c6a928899401c717c8a63ff",
+                "stableIndex": 0,
+                "optionsList": [
+                    0,
+                    1,
+                    2,
+                    3,
+                    4
+                ],
+                "questionType": "scale_rating",
+                "criticalIndex": 4,
+                "valueList": [
+                    "4"
+                ],
+                "symptomName": "",
+                "scaleOptions": [
+                    {
+                        "index": 0,
+                        "label": "Not present"
+                    },
+                    {
+                        "index": 1,
+                        "label": "Mild"
+                    },
+                    {
+                        "label": "Moderate",
+                        "index": 2
+                    },
+                    {
+                        "label": "Severe",
+                        "index": 3
+                    },
+                    {
+                        "index": 4,
+                        "label": "Disabling"
+                    }
+                ],
+                "questionId": "f8703eb0-4958-489a-b6d5-3d0bd9449206",
+                "ratingPercentage": 100,
+                "isCritical": true,
+                "criticalThresholdPercentage": 70,
+                "severity": 4
+            },
+            {
+                "question": "How severe was your Nausea?",
+                "valueList": [
+                    "2"
+                ],
+                "symptomTypeId": "5c6a928899401c717c8a6402",
+                "scaleOptions": [
+                    {
+                        "label": "Not present",
+                        "index": 0
+                    },
+                    {
+                        "index": 1,
+                        "label": "Mild"
+                    },
+                    {
+                        "index": 2,
+                        "label": "Moderate"
+                    },
+                    {
+                        "label": "Severe",
+                        "index": 3
+                    },
+                    {
+                        "label": "Disabling",
+                        "index": 4
+                    }
+                ],
+                "questionType": "scale_rating",
+                "symptomName": "",
+                "optionsList": [
+                    0,
+                    1,
+                    2,
+                    3,
+                    4
+                ],
+                "questionId": "cacfba4c-aaa8-4b0f-8f8e-9411cefff73d",
+                "stableIndex": 0,
+                "criticalIndex": 4,
+                "ratingPercentage": 50,
+                "isCritical": false,
+                "criticalThresholdPercentage": 70,
+                "severity": 2
+            },
+            {
+                "questionId": "c8666221-d32a-4c0d-8c9f-f869d0c7b191",
+                "scaleOptions": [],
+                "valueList": [
+                    "Kk"
+                ],
+                "symptomTypeId": "",
+                "question": "How are you feeling today?",
+                "symptomName": "",
+                "stableIndex": 0,
+                "questionType": "text",
+                "optionsList": []
+            },
+            {
+                "questionId": "5e7cef5e-a502-4551-a604-09518849f1d1",
+                "symptomTypeId": "",
+                "optionsList": [
+                    "Severe",
+                    "Mild",
+                    "Not Present",
+                    "Not Sure",
+                    "Very Bad"
+                ],
+                "symptomName": "",
+                "stableIndex": 0,
+                "valueList": [
+                    "Very Bad"
+                ],
+                "scaleOptions": [],
+                "question": "How is your headache?",
+                "questionType": "mcq"
+            },
+            {
+                "questionType": "msq",
+                "valueList": [
+                    "Water",
+                    "Yogurt",
+                    "Salad"
+                ],
+                "scaleOptions": [],
+                "optionsList": [
+                    "Fruits",
+                    "Veggies",
+                    "Juice",
+                    "Water",
+                    "Yogurt",
+                    "Salad",
+                    "Salad"
+                ],
+                "questionId": "60e01fc5-367a-4f7a-844a-da36a70de1fc",
+                "question": "What did you have today?",
+                "stableIndex": 0,
+                "symptomName": "",
+                "symptomTypeId": ""
+            },
+            {
+                "optionsList": [
+                    0,
+                    1,
+                    2,
+                    3,
+                    4
+                ],
+                "valueList": [
+                    "1"
+                ],
+                "questionType": "scale_rating",
+                "question": "How was your health yesterday?",
+                "symptomName": "",
+                "stableIndex": 0,
+                "criticalIndex": 4,
+                "scaleOptions": [
+                    {
+                        "label": "Not present",
+                        "index": 0
+                    },
+                    {
+                        "index": 1,
+                        "label": "Mild"
+                    },
+                    {
+                        "label": "Moderate",
+                        "index": 2
+                    },
+                    {
+                        "label": "Severe",
+                        "index": 3
+                    },
+                    {
+                        "index": 4,
+                        "label": "Disabling"
+                    }
+                ],
+                "symptomTypeId": "",
+                "questionId": "2e57653b-ea75-48e3-8f8b-c24a5ea8f6de",
+                "ratingPercentage": 25,
+                "isCritical": false,
+                "criticalThresholdPercentage": 70,
+                "severity": 1
+            },
+            {
+                "questionId": "3432c640-bc84-4e06-8865-35f3d447528b",
+                "symptomName": "",
+                "optionsList": [],
+                "symptomTypeId": "",
+                "questionType": "weight",
+                "question": "Enter Your Current Weight",
+                "scaleOptions": [],
+                "stableIndex": 0,
+                "valueList": [
+                    "601.0"
+                ]
+            }
+        ],
+        "createdAt": 1737976571800,
+        "endDate": 1738261800000,
+        "frequency": "DAILY",
+        "medicalProfileId": "6723041b7ee984705f6bfbe2",
+        "providerId": "5cd5077e313e9d79f742d520",
+        "startDate": 1737910800792,
+        "submissionDate": 1737985934123,
+        "submissionEndDate": 1737997140792,
+        "submissionStatus": "COMPLETED",
+        "surveyId": "679118d5056a0d35689a2dbe",
+        "surveyType": "GENERIC_QUESTIONNAIRE",
+        "title": "JJan 22 Test QuestionnairesSSSsss",
+        "updatedAt": 1737985934123
+    },
+    {
+        "_id": {
+            "$oid": "678f5e49f9951edf0d2625b6"
+        },
+        "assessmentLogs": [
+            {
+                "questionType": "scale_rating",
+                "criticalIndex": 4,
+                "stableIndex": 0,
+                "symptomName": "",
+                "question": "How severe was your Headache?",
+                "valueList": [
+                    "4"
+                ],
+                "optionsList": [
+                    0,
+                    1,
+                    2,
+                    3,
+                    4
+                ],
+                "questionId": "c65b2d6b-b83c-4255-853f-bd9b3743c986",
+                "scaleOptions": [
+                    {
+                        "label": "Not present",
+                        "index": 0
+                    },
+                    {
+                        "label": "Mild",
+                        "index": 1
+                    },
+                    {
+                        "index": 2,
+                        "label": "Moderate"
+                    },
+                    {
+                        "label": "Severe",
+                        "index": 3
+                    },
+                    {
+                        "index": 4,
+                        "label": "Disabling"
+                    }
+                ],
+                "symptomTypeId": "5c6a928899401c717c8a63ff",
+                "ratingPercentage": 100,
+                "isCritical": true,
+                "criticalThresholdPercentage": 70,
+                "severity": 4
+            },
+            {
+                "optionsList": [],
+                "questionType": "text",
+                "question": "Question 1",
+                "scaleOptions": [],
+                "symptomName": "",
+                "questionId": "92741b3c-2d19-44f7-b462-9bb3cc18e485",
+                "valueList": [
+                    "H"
+                ],
+                "symptomTypeId": "",
+                "stableIndex": 0
+            },
+            {
+                "questionId": "48a5df32-dd49-4e33-bde3-d2c5639cc449",
+                "optionsList": [],
+                "symptomName": "",
+                "scaleOptions": [],
+                "symptomTypeId": "",
+                "stableIndex": 0,
+                "question": "Question 2",
+                "questionType": "text",
+                "valueList": [
+                    "H"
+                ]
+            },
+            {
+                "optionsList": [
+                    0,
+                    1,
+                    2,
+                    3,
+                    4,
+                    5,
+                    6
+                ],
+                "symptomTypeId": "",
+                "criticalIndex": 6,
+                "valueList": [
+                    "6"
+                ],
+                "questionId": "c25284a2-63c1-4243-be56-8bcd82042942",
+                "question": "how severe was your headache?",
+                "scaleOptions": [
+                    {
+                        "label": "Not present",
+                        "index": 0
+                    },
+                    {
+                        "index": 1,
+                        "label": "Mild"
+                    },
+                    {
+                        "index": 2,
+                        "label": "Moderate"
+                    },
+                    {
+                        "label": "Severe",
+                        "index": 3
+                    },
+                    {
+                        "index": 4,
+                        "label": "Disabling"
+                    },
+                    {
+                        "label": "Testing 1",
+                        "index": 5
+                    },
+                    {
+                        "index": 6,
+                        "label": "Testing 2"
+                    }
+                ],
+                "symptomName": "",
+                "stableIndex": 0,
+                "questionType": "scale_rating",
+                "ratingPercentage": 100,
+                "isCritical": true,
+                "criticalThresholdPercentage": 70,
+                "severity": 6
+            },
+            {
+                "question": "Do  you have fever?",
+                "optionsList": [],
+                "valueList": [
+                    "G"
+                ],
+                "symptomName": "",
+                "questionId": "d383f010-c872-4e7d-b035-aa022ff30ce3",
+                "symptomTypeId": "",
+                "stableIndex": 0,
+                "questionType": "text",
+                "scaleOptions": []
+            },
+            {
+                "questionType": "weight",
+                "valueList": [
+                    "262.0"
+                ],
+                "symptomTypeId": "",
+                "questionId": "1f8dbc68-475e-42f0-9bf6-3048d2bc585c",
+                "symptomName": "",
+                "stableIndex": 0,
+                "scaleOptions": [],
+                "question": "Enter Your Current Weight",
+                "optionsList": []
+            }
+        ],
+        "createdAt": 1737449033224,
+        "endDate": 1738319400000,
+        "frequency": "WEEKLY",
+        "medicalProfileId": "6723041b7ee984705f6bfbe2",
+        "providerId": "5cd5077e313e9d79f742d520",
+        "startDate": 1737109800092,
+        "submissionDate": 1737449033223,
+        "submissionEndDate": 1737109800092,
+        "submissionStatus": "COMPLETED",
+        "surveyId": "6780eea781318dd7af072a5a",
+        "surveyType": "GENERIC_QUESTIONNAIRE",
+        "title": "Demo_Test-1",
+        "updatedAt": 1737449033224
+    }
+]
+
 // Example usage:
 generatePDF(
     { name: "Milyn CC", age: 45 },
@@ -7303,6 +8377,8 @@ generatePDF(
     weightData,
     activityData,
     stepData,
-    120
+    medicationData,
+    90,
+    surveyData
 );
 
